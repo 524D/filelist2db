@@ -3,6 +3,8 @@ package dataprovidersqlite
 import (
 	"database/sql"
 	"path"
+	"regexp"
+	"strings"
 
 	"github.com/524D/filelist2db/dataprovider"
 	_ "modernc.org/sqlite"
@@ -67,10 +69,65 @@ func createTables(db *sql.DB) error {
 		return err
 	}
 
-	_, err = db.Exec(`CREATE TABLE IF NOT EXISTS dir (
+	_, err = db.Exec(`CREATE TABLE IF NOT EXISTS path (
 		id INTEGER PRIMARY KEY,
 		parent_id INTEGER,
 		path_elem_id INTEGER,
+		is_dir INTEGER
+		-- foreign keys disabled FOREIGN KEY(path_id) REFERENCES path(id)
+	)`)
+	if err != nil {
+		return err
+	}
+
+	// Should we add is_dir to the index? There is usually only one item per path element
+	_, err = db.Exec(`CREATE INDEX IF NOT EXISTS path_elem_par_idx ON path (path_elem_id, parent_id)`)
+	if err != nil {
+		return err
+	}
+
+	_, err = db.Exec(`CREATE TABLE IF NOT EXISTS file2 (
+		id INTEGER PRIMARY KEY,
+		path_id INTEGER,
+		size INTEGER,
+		mtime INTEGER,
+		atime INTEGER,
+		uid INTEGER
+		-- foreign keys disabled FOREIGN KEY(path_id) REFERENCES path(id)
+	)`)
+	if err != nil {
+		return err
+	}
+
+	_, err = db.Exec(`CREATE TABLE IF NOT EXISTS simple_path_elem (
+		id INTEGER PRIMARY KEY,
+		elem TEXT UNIQUE
+	)`)
+	if err != nil {
+		return err
+	}
+
+	_, err = db.Exec(`CREATE TABLE IF NOT EXISTS simple_path_dir (
+		id INTEGER PRIMARY KEY,
+		simple_path_elem_id INTEGER,
+		dir_id INTEGER
+	)`)
+	if err != nil {
+		return err
+	}
+
+	_, err = db.Exec(`CREATE TABLE IF NOT EXISTS simple_path_file (
+		id INTEGER PRIMARY KEY,
+		simple_path_elem_id INTEGER,
+		file_id INTEGER
+	)`)
+	if err != nil {
+		return err
+	}
+
+	_, err = db.Exec(`CREATE TABLE IF NOT EXISTS dir (
+		id INTEGER PRIMARY KEY,
+		path_id INTEGER,
 		tot_size INTEGER,
 		acqtime_min   INTEGER,
 		acqtime_max   INTEGER,
@@ -86,41 +143,35 @@ func createTables(db *sql.DB) error {
 		atime_size_3y INTEGER,
 		atime_size_5y INTEGER,
 		atime_size_older INTEGER
-		-- foreign keys disabled FOREIGN KEY(parent_id) REFERENCES dir(id)
+		-- foreign keys disabled FOREIGN KEY(path_id) REFERENCES path(id)
 	)`)
 	if err != nil {
 		return err
 	}
-	_, err = db.Exec(`CREATE INDEX IF NOT EXISTS dir_elem_par_idx ON dir (path_elem_id, parent_id)`)
-	if err != nil {
-		return err
-	}
-
-	_, err = db.Exec(`CREATE TABLE IF NOT EXISTS file (
-		id INTEGER PRIMARY KEY,
-		path_elem_id INTEGER,
-		parent_id INTEGER,
-		size INTEGER,
-		mtime INTEGER,
-		atime INTEGER,
-		uid INTEGER
-		-- foreign keys disabled FOREIGN KEY(parent_id) REFERENCES dir(id)
-	)`)
-	if err != nil {
-		return err
-	}
-
-	_, err = db.Exec(`CREATE TABLE IF NOT EXISTS file (
-		id INTEGER PRIMARY KEY,
-		acqtime INTEGER,
-		file_id INTEGER
-		-- foreign keys disabled FOREIGN KEY(file_id) REFERENCES file(id)
-	)`)
+	_, err = db.Exec(`CREATE INDEX IF NOT EXISTS dir_path_idx ON dir (path_id)`)
 	if err != nil {
 		return err
 	}
 
 	return nil
+}
+
+// Generate a simplified path element for searching/matching
+func simplifyPathElem(elem string) string {
+	// Remove extension
+	p := strings.Index(elem, ".")
+	if p != -1 {
+		elem = elem[:p]
+	}
+	// remove leading and trailing whitespace
+	elem = strings.TrimSpace(elem)
+	// remove leading zeros
+	elem = strings.TrimLeft(elem, "0")
+	// remove all non-alphanumeric characters
+	elem = regexp.MustCompile(`[^a-zA-Z0-9]`).ReplaceAllString(elem, "")
+	// convert to lowercase
+	elem = strings.ToLower(elem)
+	return elem
 }
 
 // Get the numerical ids for the file path elements in elems
@@ -153,7 +204,7 @@ func (d *DataProviderSqlite) SetSourceInfo(computerName string, basePath string,
 	parentId := int64(-1)
 	for _, peId := range elemsIds {
 		var id int64
-		err := d.db.QueryRow(`SELECT id FROM dir WHERE path_elem_id = ? AND parent_id = ?`, peId, parentId).Scan(&id)
+		err := d.db.QueryRow(`SELECT id FROM path WHERE path_elem_id = ? AND parent_id = ?`, peId, parentId).Scan(&id)
 		if err != nil {
 			// not found, nothing to delete
 			return nil
@@ -161,24 +212,10 @@ func (d *DataProviderSqlite) SetSourceInfo(computerName string, basePath string,
 		parentId = id
 	}
 
-	// FIXME: multiple problems here:
-	// - we don't update the top level dir cumulative sizes
-	// - recursion does not work like this
-
+	// FIXME: add code
 	// Delete all files and directories under this directory
-	for {
-		// Delete files
-		_, err = d.db.Exec(`DELETE FROM file WHERE parent_id = ?`, parentId)
-		if err != nil {
-			return err
-		}
-		var id int64
-		err := d.db.QueryRow(`SELECT id FROM dir WHERE parent_id = ?`, parentId).Scan(&id)
-		if err != nil {
-			return nil
-		}
-		parentId = id
-	}
+
+	return nil
 }
 
 func (d *DataProviderSqlite) SourceInfo() (string, string, int64) {
@@ -227,13 +264,13 @@ func (d *DataProviderSqlite) addPathElems(elems []string) ([]int64, error) {
 	return elemsIds, nil
 }
 
-func (d *DataProviderSqlite) addFileDb(f dataprovider.FileInfo, pathElemId int64, parentId int64) (int64, error) {
+func (d *DataProviderSqlite) addFileDb2(f dataprovider.FileInfo, pathId int64) (int64, error) {
 	// Add file to file table
 	// Return id of file
 	var id int64
 
-	res, err := d.db.Exec(`INSERT INTO file (path_elem_id, parent_id, size, mtime, atime, uid) VALUES (?, ?, ?, ?, ?, ?)`,
-		pathElemId, parentId, f.Size, f.Mtime, f.Atime, f.Uid)
+	res, err := d.db.Exec(`INSERT INTO file2 (path_id, size, mtime, atime, uid) VALUES (?, ?, ?, ?, ?)`,
+		pathId, f.Size, f.Mtime, f.Atime, f.Uid)
 	if err != nil {
 		return 0, err
 	}
@@ -244,16 +281,17 @@ func (d *DataProviderSqlite) addFileDb(f dataprovider.FileInfo, pathElemId int64
 	return id, err
 }
 
-func (d *DataProviderSqlite) ensureDir(peId int64, parentId int64, depth int) (int64, error) {
-	// Add directory to dir table
+func (d *DataProviderSqlite) ensurePath(peId int64, parentId int64, isDir int) (int64, error) {
+	// Add path table
 	// Return id of directory
+	// FIXME: handle situation where directory name was previously a filename or vice versa
 	// TODO: optimize, skip if same dir as previous
 
 	var id int64
-	err := d.db.QueryRow(`SELECT id FROM dir WHERE path_elem_id = ? AND parent_id = ?`, peId, parentId).Scan(&id)
+	err := d.db.QueryRow(`SELECT id FROM path WHERE path_elem_id = ? AND parent_id = ? AND is_dir = ? `, peId, parentId, isDir).Scan(&id)
 	if err != nil {
-		// Add directory to table
-		res, err := d.db.Exec(`INSERT INTO dir (path_elem_id, parent_id) VALUES (?, ?)`, peId, parentId)
+		// Add path to table
+		res, err := d.db.Exec(`INSERT INTO path (path_elem_id, parent_id, is_dir) VALUES (?, ?, ?)`, peId, parentId, isDir)
 		if err != nil {
 			return 0, err
 		}
@@ -277,20 +315,21 @@ func (d *DataProviderSqlite) AddFile(f dataprovider.FileInfo) error {
 	if err != nil {
 		return err
 	}
-	// add directories leading up to this file to dir table
-	dirId := int64(-1)
-	for i, peId := range elemsIds[:len(elemsIds)-1] {
-		dirId, err = d.ensureDir(peId, dirId, i)
+	// add path elements leading up to this file to path table
+	pathId := int64(-1)
+	for _, peId := range elemsIds[:len(elemsIds)-1] {
+		pathId, err = d.ensurePath(peId, pathId, 1)
 		if err != nil {
 			return err
 		}
 	}
-
-	// add file to file table
-	_, err = d.addFileDb(f, elemsIds[len(elemsIds)-1], dirId)
+	// add file to path table (with is_dir = 0)
+	pathId, err = d.ensurePath(elemsIds[len(elemsIds)-1], pathId, 0)
 	if err != nil {
 		return err
 	}
+	// Add file info to file table
+	_, err = d.addFileDb2(f, pathId)
 
 	// We assume that files are added sorted by path
 	// To avoid having to update the dir table for every file, we only update it
