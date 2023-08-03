@@ -85,9 +85,13 @@ func createTables(db *sql.DB) error {
 		atime_size_1y INTEGER,
 		atime_size_3y INTEGER,
 		atime_size_5y INTEGER,
-		atime_size_older INTEGER,
-		FOREIGN KEY(parent_id) REFERENCES dir(id)
+		atime_size_older INTEGER
+		-- foreign keys disabled FOREIGN KEY(parent_id) REFERENCES dir(id)
 	)`)
+	if err != nil {
+		return err
+	}
+	_, err = db.Exec(`CREATE INDEX IF NOT EXISTS dir_elem_par_idx ON dir (path_elem_id, parent_id)`)
 	if err != nil {
 		return err
 	}
@@ -99,8 +103,8 @@ func createTables(db *sql.DB) error {
 		size INTEGER,
 		mtime INTEGER,
 		atime INTEGER,
-		uid INTEGER,
-		FOREIGN KEY(parent_id) REFERENCES dir(id)
+		uid INTEGER
+		-- foreign keys disabled FOREIGN KEY(parent_id) REFERENCES dir(id)
 	)`)
 	if err != nil {
 		return err
@@ -109,8 +113,8 @@ func createTables(db *sql.DB) error {
 	_, err = db.Exec(`CREATE TABLE IF NOT EXISTS file (
 		id INTEGER PRIMARY KEY,
 		acqtime INTEGER,
-		file_id INTEGER,
-		FOREIGN KEY(file_id) REFERENCES file(id)
+		file_id INTEGER
+		-- foreign keys disabled FOREIGN KEY(file_id) REFERENCES file(id)
 	)`)
 	if err != nil {
 		return err
