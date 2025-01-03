@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"errors"
 	"flag"
+	"fmt"
 	"io"
 	"net/url"
 	"os"
@@ -45,9 +46,44 @@ func parseCmdLine() []string {
 	// If no arguments, print usage and exit
 	// If -h or --help, print usage and exit
 
+	flag.Usage = func() {
+		w := flag.CommandLine.Output()
+
+		fmt.Fprintf(w, "Usage: %s <flags> <file1> [<file2> ...]\n", os.Args[0])
+		fmt.Fprintln(w, "Where <filex> is a list of files with metadata.")
+		fmt.Fprintln(w, "This list is generally created with a Unix 'find' command:")
+		fmt.Fprintf(w, "  find ${DIR} -type f -printf '%%s\\t%%U\\t%%i\\t%%n\\t%%T@\\t%%A@\\t%%C@\\t%%P\\n'\n")
+		fmt.Fprintln(w, "Flags:")
+		flag.PrintDefaults()
+	}
+
 	flag.StringVar(&args.dbFile, "db", "db.sqlite", "name of sqlite database to use")
 	flag.Parse()
-	return flag.Args()
+
+	files := flag.Args()
+	// Check if at least one file is provided
+	if len(files) == 0 {
+		flag.Usage()
+	}
+
+	// For each file, check common errors
+	for _, fn := range files {
+		inf, err := os.Stat(fn)
+		if err != nil {
+			fmt.Fprintln(os.Stdout, "File ", fn, " error: ", err)
+			flag.Usage()
+		}
+		if inf.IsDir() {
+			fmt.Fprintln(os.Stdout, "File is a directory: ", fn)
+			flag.Usage()
+		}
+		if inf.Size() == 0 {
+			fmt.Fprintln(os.Stdout, "File is empty: ", fn)
+			flag.Usage()
+		}
+	}
+
+	return files
 }
 
 // Decode computer name, base path and search timestamp from filename of "find" result
