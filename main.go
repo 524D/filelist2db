@@ -179,6 +179,20 @@ func parseFileList(d dataprovider.DataProvider, reader io.ReadSeeker) error {
 				return err
 			}
 		}
+
+		// FIXME: reduce memory usage at the cost of robustness
+		// Commit transaction periodically to avoid memory issues with large datasets
+		if lineCount > 0 && lineCount%10000 == 0 {
+			err := d.CommitTransaction()
+			if err != nil {
+				return err
+			}
+			err = d.StartTransaction()
+			if err != nil {
+				return err
+			}
+		}
+
 		if lineCount%1000 == 0 {
 			filePos, err := reader.Seek(0, io.SeekCurrent)
 			if err != nil {
