@@ -17,7 +17,12 @@ type DataProviderSqlite struct {
 	basePath        string
 	acqTime         int64
 	prevDirElemsIds []int64 // Path elements IDs of previous file
-
+	// Prepared statements
+	stmtSelectPathElem *sql.Stmt
+	stmtInsertPathElem *sql.Stmt
+	stmtSelectPath     *sql.Stmt
+	stmtInsertPath     *sql.Stmt
+	stmtInsertFile     *sql.Stmt
 }
 
 func InitDataProviderSqlite(dbFile string) (dataprovider.DataProvider, error) {
@@ -41,10 +46,48 @@ func InitDataProviderSqlite(dbFile string) (dataprovider.DataProvider, error) {
 		return nil, err
 	}
 
+	// Prepare statements for repeated use
+	d.stmtSelectPathElem, err = db.Prepare(`SELECT id FROM path_elem WHERE elem = ?`)
+	if err != nil {
+		return nil, err
+	}
+	d.stmtInsertPathElem, err = db.Prepare(`INSERT INTO path_elem (elem) VALUES (?)`)
+	if err != nil {
+		return nil, err
+	}
+	d.stmtSelectPath, err = db.Prepare(`SELECT id FROM path WHERE path_elem_id = ? AND parent_id = ? AND is_dir = ?`)
+	if err != nil {
+		return nil, err
+	}
+	d.stmtInsertPath, err = db.Prepare(`INSERT INTO path (path_elem_id, parent_id, is_dir) VALUES (?, ?, ?)`)
+	if err != nil {
+		return nil, err
+	}
+	d.stmtInsertFile, err = db.Prepare(`INSERT INTO file2 (path_id, size, mtime, atime, uid) VALUES (?, ?, ?, ?, ?)`)
+	if err != nil {
+		return nil, err
+	}
+
 	return &d, nil
 }
 
 func (d *DataProviderSqlite) Finalize() {
+	// Close prepared statements
+	if d.stmtSelectPathElem != nil {
+		d.stmtSelectPathElem.Close()
+	}
+	if d.stmtInsertPathElem != nil {
+		d.stmtInsertPathElem.Close()
+	}
+	if d.stmtSelectPath != nil {
+		d.stmtSelectPath.Close()
+	}
+	if d.stmtInsertPath != nil {
+		d.stmtInsertPath.Close()
+	}
+	if d.stmtInsertFile != nil {
+		d.stmtInsertFile.Close()
+	}
 	d.db.Close()
 }
 
@@ -168,6 +211,15 @@ func createTables(db *sql.DB) error {
 	if err != nil {
 		return err
 	}
+	// Add indexes for common query patterns
+	_, err = db.Exec(`CREATE INDEX IF NOT EXISTS file_path_idx ON file2 (path_id)`)
+	if err != nil {
+		return err
+	}
+	_, err = db.Exec(`CREATE INDEX IF NOT EXISTS file_mtime_idx ON file2 (mtime)`)
+	if err != nil {
+		return err
+	}
 	_, err = db.Exec(`CREATE INDEX IF NOT EXISTS dir_path_idx ON dir (path_id)`)
 	if err != nil {
 		return err
@@ -262,14 +314,13 @@ func (d *DataProviderSqlite) addPathElems(elems []string) ([]int64, error) {
 	// Return slice with ids of path elements
 	// If path element already exists, don't add it again
 
-	// FIXME: use prepared statements
 	elemsIds := make([]int64, 0, len(elems))
 	for _, e := range elems {
 		var id int64
-		err := d.db.QueryRow(`SELECT id FROM path_elem WHERE elem = ?`, e).Scan(&id)
+		err := d.stmtSelectPathElem.QueryRow(e).Scan(&id)
 		if err != nil {
 			// Add path element to table
-			res, err := d.db.Exec(`INSERT INTO path_elem (elem) VALUES (?)`, e)
+			res, err := d.stmtInsertPathElem.Exec(e)
 			if err != nil {
 				return nil, err
 			}
@@ -289,8 +340,7 @@ func (d *DataProviderSqlite) addFileDb2(f dataprovider.FileInfo, pathId int64) (
 	// Return id of file
 	var id int64
 
-	res, err := d.db.Exec(`INSERT INTO file2 (path_id, size, mtime, atime, uid) VALUES (?, ?, ?, ?, ?)`,
-		pathId, f.Size, f.Mtime, f.Atime, f.Uid)
+	res, err := d.stmtInsertFile.Exec(pathId, f.Size, f.Mtime, f.Atime, f.Uid)
 	if err != nil {
 		return 0, err
 	}
@@ -308,10 +358,10 @@ func (d *DataProviderSqlite) ensurePath(peId int64, parentId int64, isDir int) (
 	// TODO: optimize, skip if same dir as previous
 
 	var id int64
-	err := d.db.QueryRow(`SELECT id FROM path WHERE path_elem_id = ? AND parent_id = ? AND is_dir = ? `, peId, parentId, isDir).Scan(&id)
+	err := d.stmtSelectPath.QueryRow(peId, parentId, isDir).Scan(&id)
 	if err != nil {
 		// Add path to table
-		res, err := d.db.Exec(`INSERT INTO path (path_elem_id, parent_id, is_dir) VALUES (?, ?, ?)`, peId, parentId, isDir)
+		res, err := d.stmtInsertPath.Exec(peId, parentId, isDir)
 		if err != nil {
 			return 0, err
 		}
