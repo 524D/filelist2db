@@ -59,6 +59,26 @@ func openDatabase(dbFile string) (*sql.DB, error) {
 	return db, nil
 }
 
+// Database design
+// The database stores for each file:
+// - The file's path
+// - The file's size
+// - The file's modification time
+// - The file's access time
+// - The file's owner (uid)
+// The database stores for each directory:
+// - The directory's path
+// - The total size of files in the directory
+// - The acquisition time range of files in the directory
+// - The distribution of file modification times and sizes in the directory
+// - The distribution of file access times and sizes in the directory
+// The database tries to minimize the amount of data needed,
+// while still allowing fast lookups of files and directories.
+// Since path elements are often repeated, they are stored in a separate table path_elem.
+// The path table stores the hierarchy/tree of path elements.
+// The file table stores the file information, linked to the path table.
+// The dir table stores the directory information, linked to the path table.
+
 func createTables(db *sql.DB) error {
 	// Create tables if they don't exist
 	_, err := db.Exec(`CREATE TABLE IF NOT EXISTS path_elem (
@@ -381,4 +401,15 @@ func (d *DataProviderSqlite) StartTransaction() error {
 func (d *DataProviderSqlite) CommitTransaction() error {
 	_, err := d.db.Exec(`END TRANSACTION`)
 	return err
+}
+
+type SameFiles struct {
+	Files []dataprovider.FileInfo
+}
+
+func (d *DataProviderSqlite) FindSameFiles(minSize uint64, minTimeDiff int64, maxTimeDiff int64) ([]SameFiles, error) {
+	// Find files with same size and same mtime
+	// Return slice of SameFiles
+
+	return nil, nil
 }
