@@ -102,9 +102,9 @@ func parseCmdLine() []string {
 // hex character code, e.g. "%2F" for slash ("/") and "%5C" for backslash ("\").
 // "%" is replaced by %25
 func decodeFindFilename(fn string) (string, string, int64, error) {
-	re := regexp.MustCompile(`^(?:.*[/\\])?(?:_([^/\\]*?)_)?([^/\\]*?)_([0-9\-]+)\.lst|\.txt$`)
+	re := regexp.MustCompile(`^(?:.*[/\\])?(?:_([^/\\]*?)_)?([^/\\]*?)_([0-9]{8}-[0-9]{6})\.(?:lst|txt)$`)
 	match := re.FindStringSubmatch(fn)
-	if match == nil {
+	if match == nil || len(match) < 4 {
 		return ``, ``, 0, errors.New("can't extract basepath/timestamp from filename")
 	}
 	basePath, err := url.QueryUnescape(match[2])
