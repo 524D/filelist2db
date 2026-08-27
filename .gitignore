@@ -1,3 +1,5 @@
 db.sqlite
 /testdata
 
+*.exe
+.vscode/launch.json
