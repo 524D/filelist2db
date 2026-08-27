@@ -60,3 +60,23 @@ func TestSetSourceInfoRemovesPreviousSourceData(t *testing.T) {
 		t.Fatalf("expected previous source files to be removed, got %d remaining", fileCount)
 	}
 }
+
+func TestParseFileInfoLine(t *testing.T) {
+	line := "123\t1000\t7\t1\t1646112000.0\t1646112001.0\t1646112002.0\tfolder/sub/file.txt"
+	f, ok := parseFileInfoLine(line)
+	if !ok {
+		t.Fatal("parseFileInfoLine should accept a valid file list line")
+	}
+	if f.Size != 123 {
+		t.Fatalf("size mismatch: got %d want %d", f.Size, 123)
+	}
+	if f.Uid != dataprovider.UidT(1000) {
+		t.Fatalf("uid mismatch: got %d want %d", f.Uid, dataprovider.UidT(1000))
+	}
+	if f.Mtime != 1646112000 {
+		t.Fatalf("mtime mismatch: got %d want %d", f.Mtime, 1646112000)
+	}
+	if f.Path != "folder/sub/file.txt" {
+		t.Fatalf("path mismatch: got %q want %q", f.Path, "folder/sub/file.txt")
+	}
+}

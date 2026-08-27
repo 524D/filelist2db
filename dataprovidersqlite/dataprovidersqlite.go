@@ -266,6 +266,10 @@ func (d *DataProviderSqlite) SetSourceInfo(computerName string, basePath string,
 	d.basePath = basePath
 	d.acqTime = acqTime
 	elems := splitPath(path.Join(computerName, basePath))
+	if len(elems) == 0 {
+		return nil
+	}
+
 	// Remove all data from previous run for this source
 	elemsIds, err := d.getElemsIds(elems)
 	if err != nil {
@@ -284,10 +288,56 @@ func (d *DataProviderSqlite) SetSourceInfo(computerName string, basePath string,
 		parentId = id
 	}
 
-	// FIXME: add code
-	// Delete all files and directories under this directory
+	// Delete all files and directories under this directory.
+	tx, err := d.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
 
-	return nil
+	_, err = tx.Exec(`
+		WITH RECURSIVE subtree AS (
+			SELECT id FROM path WHERE id = ?
+			UNION ALL
+			SELECT p.id
+			FROM path p
+			INNER JOIN subtree s ON p.parent_id = s.id
+		)
+		DELETE FROM file2 WHERE path_id IN (SELECT id FROM subtree)
+	`, parentId)
+	if err != nil {
+		return err
+	}
+
+	_, err = tx.Exec(`
+		WITH RECURSIVE subtree AS (
+			SELECT id FROM path WHERE id = ?
+			UNION ALL
+			SELECT p.id
+			FROM path p
+			INNER JOIN subtree s ON p.parent_id = s.id
+		)
+		DELETE FROM dir WHERE path_id IN (SELECT id FROM subtree)
+	`, parentId)
+	if err != nil {
+		return err
+	}
+
+	_, err = tx.Exec(`
+		WITH RECURSIVE subtree AS (
+			SELECT id FROM path WHERE id = ?
+			UNION ALL
+			SELECT p.id
+			FROM path p
+			INNER JOIN subtree s ON p.parent_id = s.id
+		)
+		DELETE FROM path WHERE id IN (SELECT id FROM subtree)
+	`, parentId)
+	if err != nil {
+		return err
+	}
+
+	return tx.Commit()
 }
 
 func (d *DataProviderSqlite) SourceInfo() (string, string, int64) {
