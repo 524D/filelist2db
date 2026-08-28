@@ -18,6 +18,11 @@ type DataProvider interface {
 	SourceInfo() (string, string, int64)
 	AddFile(FileInfo) error
 	RebuildDirTable(batchSize int, progress ProgressFunc) error
+	DirExists(dir string) (bool, error)
+	DirSizeModTimeBin(dir string, bin int) (uint64, error)
+	DirSizeAccTimeBin(dir string, bin int) (uint64, error)
+	SubDirs(dir string) ([]string, error)
+	SubDirSize(dir string) (uint64, error)
 	Finalize()
 	StartTransaction() error
 	CommitTransaction() error

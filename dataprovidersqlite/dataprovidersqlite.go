@@ -349,6 +349,147 @@ func (d *DataProviderSqlite) SourceInfo() (string, string, int64) {
 	return d.computerName, d.basePath, d.acqTime
 }
 
+func (d *DataProviderSqlite) resolvePathID(dir string) (int64, error) {
+	trimmed := strings.TrimSpace(dir)
+	if trimmed == "" || trimmed == "." {
+		trimmed = path.Join(d.computerName, d.basePath)
+	} else {
+		trimmed = path.Join(d.computerName, d.basePath, trimmed)
+	}
+	trimmed = path.Clean(trimmed)
+	if trimmed == "." {
+		trimmed = path.Join(d.computerName, d.basePath)
+	}
+
+	elems := splitPath(trimmed)
+	if len(elems) == 0 {
+		return 0, sql.ErrNoRows
+	}
+
+	parentID := int64(-1)
+	for _, elem := range elems {
+		var pathElemID int64
+		if err := d.db.QueryRow(`SELECT id FROM path_elem WHERE elem = ?`, elem).Scan(&pathElemID); err != nil {
+			return 0, err
+		}
+		var id int64
+		if err := d.db.QueryRow(`SELECT id FROM path WHERE path_elem_id = ? AND parent_id = ? AND is_dir = 1`, pathElemID, parentID).Scan(&id); err != nil {
+			return 0, err
+		}
+		parentID = id
+	}
+	return parentID, nil
+}
+
+func (d *DataProviderSqlite) DirExists(dir string) (bool, error) {
+	_, err := d.resolvePathID(dir)
+	if err == nil {
+		return true, nil
+	}
+	if err == sql.ErrNoRows {
+		return false, nil
+	}
+	return false, err
+}
+
+func (d *DataProviderSqlite) DirSizeModTimeBin(dir string, bin int) (uint64, error) {
+	pathID, err := d.resolvePathID(dir)
+	if err != nil {
+		return 0, err
+	}
+	var value int64
+	col := "mtime_size_1m"
+	switch bin {
+	case 0:
+		col = "mtime_size_1m"
+	case 1:
+		col = "mtime_size_3m"
+	case 2:
+		col = "mtime_size_1y"
+	case 3:
+		col = "mtime_size_3y"
+	case 4:
+		col = "mtime_size_5y"
+	default:
+		col = "mtime_size_older"
+	}
+	query := `SELECT ` + col + ` FROM dir WHERE path_id = ?`
+	if err := d.db.QueryRow(query, pathID).Scan(&value); err != nil {
+		if err == sql.ErrNoRows {
+			return 0, nil
+		}
+		return 0, err
+	}
+	return uint64(value), nil
+}
+
+func (d *DataProviderSqlite) DirSizeAccTimeBin(dir string, bin int) (uint64, error) {
+	pathID, err := d.resolvePathID(dir)
+	if err != nil {
+		return 0, err
+	}
+	var value int64
+	col := "atime_size_1m"
+	switch bin {
+	case 0:
+		col = "atime_size_1m"
+	case 1:
+		col = "atime_size_3m"
+	case 2:
+		col = "atime_size_1y"
+	case 3:
+		col = "atime_size_3y"
+	case 4:
+		col = "atime_size_5y"
+	default:
+		col = "atime_size_older"
+	}
+	query := `SELECT ` + col + ` FROM dir WHERE path_id = ?`
+	if err := d.db.QueryRow(query, pathID).Scan(&value); err != nil {
+		if err == sql.ErrNoRows {
+			return 0, nil
+		}
+		return 0, err
+	}
+	return uint64(value), nil
+}
+
+func (d *DataProviderSqlite) SubDirs(dir string) ([]string, error) {
+	pathID, err := d.resolvePathID(dir)
+	if err != nil {
+		return nil, err
+	}
+	rows, err := d.db.Query(`SELECT pe.elem FROM path p JOIN path_elem pe ON pe.id = p.path_elem_id WHERE p.parent_id = ? AND p.is_dir = 1 ORDER BY pe.elem`, pathID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := make([]string, 0)
+	for rows.Next() {
+		var elem string
+		if err := rows.Scan(&elem); err != nil {
+			return nil, err
+		}
+		out = append(out, elem)
+	}
+	return out, rows.Err()
+}
+
+func (d *DataProviderSqlite) SubDirSize(dir string) (uint64, error) {
+	pathID, err := d.resolvePathID(dir)
+	if err != nil {
+		return 0, err
+	}
+	var totalSize int64
+	if err := d.db.QueryRow(`SELECT total_size FROM dir WHERE path_id = ?`, pathID).Scan(&totalSize); err != nil {
+		if err == sql.ErrNoRows {
+			return 0, nil
+		}
+		return 0, err
+	}
+	return uint64(totalSize), nil
+}
+
 func splitPath(fn string) []string {
 	// split path in elements
 	elems := make([]string, 0, 10)
