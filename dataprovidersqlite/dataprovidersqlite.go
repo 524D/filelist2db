@@ -190,22 +190,23 @@ func createTables(db *sql.DB) error {
 
 	_, err = db.Exec(`CREATE TABLE IF NOT EXISTS dir (
 		id INTEGER PRIMARY KEY,
-		path_id INTEGER,
-		tot_size INTEGER,
-		acqtime_min   INTEGER,
-		acqtime_max   INTEGER,
-		mtime_size_1m INTEGER,
-		mtime_size_3m INTEGER,
-		mtime_size_1y INTEGER,
-		mtime_size_3y INTEGER,
-		mtime_size_5y INTEGER,
-		mtime_size_older INTEGER,
-		atime_size_1m INTEGER,
-		atime_size_3m INTEGER,
-		atime_size_1y INTEGER,
-		atime_size_3y INTEGER,
-		atime_size_5y INTEGER,
-		atime_size_older INTEGER
+		path_id INTEGER NOT NULL DEFAULT 0,
+		file_count INTEGER NOT NULL DEFAULT 0,
+		total_size INTEGER NOT NULL DEFAULT 0,
+		acqtime_min   INTEGER NOT NULL DEFAULT 0,
+		acqtime_max   INTEGER NOT NULL DEFAULT 0,
+		mtime_size_1m INTEGER NOT NULL DEFAULT 0,
+		mtime_size_3m INTEGER NOT NULL DEFAULT 0,
+		mtime_size_1y INTEGER NOT NULL DEFAULT 0,
+		mtime_size_3y INTEGER NOT NULL DEFAULT 0,
+		mtime_size_5y INTEGER NOT NULL DEFAULT 0,
+		mtime_size_older INTEGER NOT NULL DEFAULT 0,
+		atime_size_1m INTEGER NOT NULL DEFAULT 0,
+		atime_size_3m INTEGER NOT NULL DEFAULT 0,
+		atime_size_1y INTEGER NOT NULL DEFAULT 0,
+		atime_size_3y INTEGER NOT NULL DEFAULT 0,
+		atime_size_5y INTEGER NOT NULL DEFAULT 0,
+		atime_size_older INTEGER NOT NULL DEFAULT 0
 		-- foreign keys disabled FOREIGN KEY(path_id) REFERENCES path(id)
 	)`)
 	if err != nil {
