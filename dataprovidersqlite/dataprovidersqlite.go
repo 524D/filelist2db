@@ -540,9 +540,14 @@ func (d *DataProviderSqlite) flushDirSummaryBatch(stats map[int64]*dirSummary) e
 	return nil
 }
 
-func (d *DataProviderSqlite) RebuildDirTable(batchSize int) error {
+func (d *DataProviderSqlite) RebuildDirTable(batchSize int, progress dataprovider.ProgressFunc) error {
 	if batchSize <= 0 {
 		batchSize = 1000
+	}
+
+	var totalRows int64
+	if err := d.db.QueryRow(`SELECT COUNT(*) FROM file2`).Scan(&totalRows); err != nil {
+		return err
 	}
 
 	if _, err := d.db.Exec(`DELETE FROM dir`); err != nil {
@@ -550,6 +555,7 @@ func (d *DataProviderSqlite) RebuildDirTable(batchSize int) error {
 	}
 
 	stats := make(map[int64]*dirSummary)
+	processedTotal := int64(0)
 	for offset := 0; ; offset += batchSize {
 		rows, err := d.db.Query(`SELECT path_id, size, mtime, atime FROM file2 ORDER BY id LIMIT ? OFFSET ?`, batchSize, offset)
 		if err != nil {
@@ -559,6 +565,7 @@ func (d *DataProviderSqlite) RebuildDirTable(batchSize int) error {
 		processed := false
 		for rows.Next() {
 			processed = true
+			processedTotal++
 			var pathID int64
 			var size int64
 			var mtime int64
@@ -600,6 +607,9 @@ func (d *DataProviderSqlite) RebuildDirTable(batchSize int) error {
 		rows.Close()
 		if !processed {
 			break
+		}
+		if progress != nil {
+			progress(processedTotal, totalRows)
 		}
 		if err := d.flushDirSummaryBatch(stats); err != nil {
 			return err

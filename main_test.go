@@ -125,8 +125,17 @@ func TestRebuildDirTableAggregatesPerBatch(t *testing.T) {
 		}
 	}
 
-	if err := d.RebuildDirTable(2); err != nil {
+	var lastCurrent int64
+	if err := d.RebuildDirTable(2, func(current, total int64) {
+		lastCurrent = current
+		if total <= 0 {
+			t.Fatalf("progress total should be positive")
+		}
+	}); err != nil {
 		t.Fatalf("RebuildDirTable returned error: %v", err)
+	}
+	if lastCurrent != 3 {
+		t.Fatalf("progress callback should reach the final file count, got %d want %d", lastCurrent, 3)
 	}
 
 	db, err := sql.Open("sqlite", dbFile)

@@ -2,6 +2,8 @@ package dataprovider
 
 type UidT uint64
 
+type ProgressFunc func(current int64, total int64)
+
 type FileInfo struct {
 	Path       string
 	Size       uint64
@@ -15,7 +17,7 @@ type DataProvider interface {
 	SetSourceInfo(computerName string, basePath string, acqTime int64) error
 	SourceInfo() (string, string, int64)
 	AddFile(FileInfo) error
-	RebuildDirTable(batchSize int) error
+	RebuildDirTable(batchSize int, progress ProgressFunc) error
 	Finalize()
 	StartTransaction() error
 	CommitTransaction() error

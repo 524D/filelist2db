@@ -256,7 +256,15 @@ func main() {
 	}
 
 	if args.buildDirSummary {
-		err = d.RebuildDirTable(100000)
+		bar := progressbar.Default(100)
+		progress := func(current, total int64) {
+			if total <= 0 {
+				return
+			}
+			pct := current * 100 / total
+			bar.Set64(pct)
+		}
+		err = d.RebuildDirTable(100000, progress)
 		if err != nil {
 			panic(err)
 		}
