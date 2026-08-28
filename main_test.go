@@ -27,6 +27,36 @@ func TestDecodeFindFilename(t *testing.T) {
 	}
 }
 
+func TestSetSourceInfoRecordsAcquisitionTimestamp(t *testing.T) {
+	dbFile := filepath.Join(t.TempDir(), "db.sqlite")
+	d, err := dataprovidersqlite.InitDataProviderSqlite(dbFile)
+	if err != nil {
+		t.Fatalf("InitDataProviderSqlite returned error: %v", err)
+	}
+	defer d.Finalize()
+
+	if err := d.SetSourceInfo("computername", "E:", 1000); err != nil {
+		t.Fatalf("SetSourceInfo returned error: %v", err)
+	}
+
+	db, err := sql.Open("sqlite", dbFile)
+	if err != nil {
+		t.Fatalf("sql.Open returned error: %v", err)
+	}
+	defer db.Close()
+
+	var lastID, ts int64
+	if err := db.QueryRow(`SELECT id, timestamp FROM input_file ORDER BY id DESC LIMIT 1`).Scan(&lastID, &ts); err != nil {
+		t.Fatalf("input_file query returned error: %v", err)
+	}
+	if lastID != 1 {
+		t.Fatalf("input_file id mismatch: got %d want %d", lastID, 1)
+	}
+	if ts != 1000 {
+		t.Fatalf("input_file timestamp mismatch: got %d want %d", ts, 1000)
+	}
+}
+
 func TestSetSourceInfoRemovesPreviousSourceData(t *testing.T) {
 	dbFile := filepath.Join(t.TempDir(), "db.sqlite")
 	d, err := dataprovidersqlite.InitDataProviderSqlite(dbFile)

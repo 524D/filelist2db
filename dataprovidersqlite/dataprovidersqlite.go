@@ -212,6 +212,14 @@ func createTables(db *sql.DB) error {
 	if err != nil {
 		return err
 	}
+
+	_, err = db.Exec(`CREATE TABLE IF NOT EXISTS input_file (
+		id INTEGER PRIMARY KEY,
+		timestamp INTEGER NOT NULL DEFAULT 0
+	)`)
+	if err != nil {
+		return err
+	}
 	// Add indexes for common query patterns
 	_, err = db.Exec(`CREATE INDEX IF NOT EXISTS file_path_idx ON file2 (path_id)`)
 	if err != nil {
@@ -270,6 +278,10 @@ func (d *DataProviderSqlite) SetSourceInfo(computerName string, basePath string,
 	d.computerName = computerName
 	d.basePath = basePath
 	d.acqTime = acqTime
+	if _, err := d.db.Exec(`INSERT INTO input_file (timestamp) VALUES (?)`, d.acqTime); err != nil {
+		return err
+	}
+
 	elems := splitPath(path.Join(computerName, basePath))
 	if len(elems) == 0 {
 		return nil
