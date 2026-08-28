@@ -80,3 +80,26 @@ func TestParseFileInfoLine(t *testing.T) {
 		t.Fatalf("path mismatch: got %q want %q", f.Path, "folder/sub/file.txt")
 	}
 }
+
+func TestAddFileStoresPathFragments(t *testing.T) {
+	dbFile := filepath.Join(t.TempDir(), "db.sqlite")
+	d, err := dataprovidersqlite.InitDataProviderSqlite(dbFile)
+	if err != nil {
+		t.Fatalf("InitDataProviderSqlite returned error: %v", err)
+	}
+	defer d.Finalize()
+
+	if err := d.SetSourceInfo("computername", "E:", 1000); err != nil {
+		t.Fatalf("SetSourceInfo returned error: %v", err)
+	}
+	if err := d.AddFile(dataprovider.FileInfo{Path: "folder/sub/My-Report.txt", Size: 42, Mtime: 100, Atime: 200, Uid: 7}); err != nil {
+		t.Fatalf("AddFile returned error: %v", err)
+	}
+	if err := d.SetSourceInfo("computername", "E:", 1001); err != nil {
+		t.Fatalf("SetSourceInfo repeat call returned error: %v", err)
+	}
+	if err := d.AddFile(dataprovider.FileInfo{Path: "folder/sub/My-Report.txt", Size: 42, Mtime: 100, Atime: 200, Uid: 7}); err != nil {
+		t.Fatalf("AddFile second import returned error: %v", err)
+	}
+
+}
