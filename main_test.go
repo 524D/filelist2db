@@ -103,3 +103,52 @@ func TestAddFileStoresPathFragments(t *testing.T) {
 	}
 
 }
+
+func TestRebuildDirTableAggregatesPerBatch(t *testing.T) {
+	dbFile := filepath.Join(t.TempDir(), "db.sqlite")
+	d, err := dataprovidersqlite.InitDataProviderSqlite(dbFile)
+	if err != nil {
+		t.Fatalf("InitDataProviderSqlite returned error: %v", err)
+	}
+	defer d.Finalize()
+
+	if err := d.SetSourceInfo("computername", "E:", 1000); err != nil {
+		t.Fatalf("SetSourceInfo returned error: %v", err)
+	}
+	for _, f := range []dataprovider.FileInfo{
+		{Path: "folder/a.txt", Size: 10, Mtime: 500, Atime: 200, Uid: 1},
+		{Path: "folder/b.txt", Size: 20, Mtime: 600, Atime: 300, Uid: 1},
+		{Path: "folder/c.txt", Size: 30, Mtime: 700, Atime: 400, Uid: 1},
+	} {
+		if err := d.AddFile(f); err != nil {
+			t.Fatalf("AddFile returned error: %v", err)
+		}
+	}
+
+	if err := d.RebuildDirTable(2); err != nil {
+		t.Fatalf("RebuildDirTable returned error: %v", err)
+	}
+
+	db, err := sql.Open("sqlite", dbFile)
+	if err != nil {
+		t.Fatalf("sql.Open returned error: %v", err)
+	}
+	defer db.Close()
+
+	var fileCount, totalSize int64
+	if err := db.QueryRow(`
+		SELECT d.file_count, d.total_size
+		FROM dir d
+		JOIN path p ON p.id = d.path_id
+		JOIN path_elem pe ON pe.id = p.path_elem_id
+		WHERE pe.elem = 'folder' AND p.is_dir = 1
+	`).Scan(&fileCount, &totalSize); err != nil {
+		t.Fatalf("query dir aggregate returned error: %v", err)
+	}
+	if fileCount != 3 {
+		t.Fatalf("folder file_count mismatch: got %d want %d", fileCount, 3)
+	}
+	if totalSize != 60 {
+		t.Fatalf("folder total_size mismatch: got %d want %d", totalSize, 60)
+	}
+}

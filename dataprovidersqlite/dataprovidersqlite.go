@@ -221,6 +221,10 @@ func createTables(db *sql.DB) error {
 	if err != nil {
 		return err
 	}
+	_, err = db.Exec(`CREATE UNIQUE INDEX IF NOT EXISTS dir_path_unique_idx ON dir (path_id)`)
+	if err != nil {
+		return err
+	}
 	_, err = db.Exec(`CREATE INDEX IF NOT EXISTS dir_path_idx ON dir (path_id)`)
 	if err != nil {
 		return err
@@ -422,6 +426,188 @@ func (d *DataProviderSqlite) ensurePath(peId int64, parentId int64, isDir int) (
 		}
 	}
 	return id, nil
+}
+
+type dirSummary struct {
+	fileCount  int64
+	totalSize  int64
+	mtimeSize  [6]int64
+	atimeSize  [6]int64
+	acqtimeMin int64
+	acqtimeMax int64
+}
+
+type dirTimeBin struct {
+	maxAgeS int64
+}
+
+var dirTimeBins = [...]dirTimeBin{
+	{maxAgeS: 3600 * 24 * 30},
+	{maxAgeS: 3600 * 24 * 90},
+	{maxAgeS: 3600 * 24 * 365},
+	{maxAgeS: 3600 * 24 * 365 * 3},
+	{maxAgeS: 3600 * 24 * 365 * 5},
+	{maxAgeS: 3600 * 24 * 30 * 999},
+}
+
+func dirTimeBucket(t int64, acqTime int64) int {
+	age := acqTime - t
+	for i, tb := range dirTimeBins {
+		if age < tb.maxAgeS {
+			return i
+		}
+	}
+	return len(dirTimeBins) - 1
+}
+
+func (d *DataProviderSqlite) ancestorDirIDs(pathID int64) ([]int64, error) {
+	ids := make([]int64, 0, 8)
+	for current := pathID; current > 0; {
+		var parentID, isDir int64
+		err := d.db.QueryRow(`SELECT parent_id, is_dir FROM path WHERE id = ?`, current).Scan(&parentID, &isDir)
+		if err != nil {
+			return nil, err
+		}
+		if isDir == 1 {
+			ids = append(ids, current)
+		}
+		if parentID <= 0 {
+			break
+		}
+		current = parentID
+	}
+	return ids, nil
+}
+
+func (d *DataProviderSqlite) flushDirSummaryBatch(stats map[int64]*dirSummary) error {
+	if len(stats) == 0 {
+		return nil
+	}
+
+	stmt, err := d.db.Prepare(`
+		INSERT INTO dir (
+			path_id, file_count, total_size, acqtime_min, acqtime_max,
+			mtime_size_1m, mtime_size_3m, mtime_size_1y, mtime_size_3y, mtime_size_5y, mtime_size_older,
+			atime_size_1m, atime_size_3m, atime_size_1y, atime_size_3y, atime_size_5y, atime_size_older
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		ON CONFLICT(path_id) DO UPDATE SET
+			file_count = dir.file_count + excluded.file_count,
+			total_size = dir.total_size + excluded.total_size,
+			acqtime_min = MIN(dir.acqtime_min, excluded.acqtime_min),
+			acqtime_max = MAX(dir.acqtime_max, excluded.acqtime_max),
+			mtime_size_1m = dir.mtime_size_1m + excluded.mtime_size_1m,
+			mtime_size_3m = dir.mtime_size_3m + excluded.mtime_size_3m,
+			mtime_size_1y = dir.mtime_size_1y + excluded.mtime_size_1y,
+			mtime_size_3y = dir.mtime_size_3y + excluded.mtime_size_3y,
+			mtime_size_5y = dir.mtime_size_5y + excluded.mtime_size_5y,
+			mtime_size_older = dir.mtime_size_older + excluded.mtime_size_older,
+			atime_size_1m = dir.atime_size_1m + excluded.atime_size_1m,
+			atime_size_3m = dir.atime_size_3m + excluded.atime_size_3m,
+			atime_size_1y = dir.atime_size_1y + excluded.atime_size_1y,
+			atime_size_3y = dir.atime_size_3y + excluded.atime_size_3y,
+			atime_size_5y = dir.atime_size_5y + excluded.atime_size_5y,
+			atime_size_older = dir.atime_size_older + excluded.atime_size_older
+	`)
+	if err != nil {
+		return err
+	}
+	defer stmt.Close()
+
+	for pathID, summary := range stats {
+		_, err = stmt.Exec(
+			pathID,
+			summary.fileCount,
+			summary.totalSize,
+			summary.acqtimeMin,
+			summary.acqtimeMax,
+			summary.mtimeSize[0],
+			summary.mtimeSize[1],
+			summary.mtimeSize[2],
+			summary.mtimeSize[3],
+			summary.mtimeSize[4],
+			summary.mtimeSize[5],
+			summary.atimeSize[0],
+			summary.atimeSize[1],
+			summary.atimeSize[2],
+			summary.atimeSize[3],
+			summary.atimeSize[4],
+			summary.atimeSize[5],
+		)
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (d *DataProviderSqlite) RebuildDirTable(batchSize int) error {
+	if batchSize <= 0 {
+		batchSize = 1000
+	}
+
+	if _, err := d.db.Exec(`DELETE FROM dir`); err != nil {
+		return err
+	}
+
+	stats := make(map[int64]*dirSummary)
+	for offset := 0; ; offset += batchSize {
+		rows, err := d.db.Query(`SELECT path_id, size, mtime, atime FROM file2 ORDER BY id LIMIT ? OFFSET ?`, batchSize, offset)
+		if err != nil {
+			return err
+		}
+
+		processed := false
+		for rows.Next() {
+			processed = true
+			var pathID int64
+			var size int64
+			var mtime int64
+			var atime int64
+			if err := rows.Scan(&pathID, &size, &mtime, &atime); err != nil {
+				rows.Close()
+				return err
+			}
+
+			dirs, err := d.ancestorDirIDs(pathID)
+			if err != nil {
+				rows.Close()
+				return err
+			}
+			for _, dirID := range dirs {
+				sum := stats[dirID]
+				if sum == nil {
+					sum = &dirSummary{acqtimeMin: d.acqTime, acqtimeMax: d.acqTime}
+					stats[dirID] = sum
+				}
+				sum.fileCount++
+				sum.totalSize += size
+				mtimeBucket := dirTimeBucket(mtime, d.acqTime)
+				sum.mtimeSize[mtimeBucket] += size
+				atimeBucket := dirTimeBucket(atime, d.acqTime)
+				sum.atimeSize[atimeBucket] += size
+				if sum.acqtimeMin == 0 || d.acqTime < sum.acqtimeMin {
+					sum.acqtimeMin = d.acqTime
+				}
+				if d.acqTime > sum.acqtimeMax {
+					sum.acqtimeMax = d.acqTime
+				}
+			}
+		}
+		if err := rows.Err(); err != nil {
+			rows.Close()
+			return err
+		}
+		rows.Close()
+		if !processed {
+			break
+		}
+		if err := d.flushDirSummaryBatch(stats); err != nil {
+			return err
+		}
+		stats = make(map[int64]*dirSummary)
+	}
+
+	return nil
 }
 
 func (d *DataProviderSqlite) AddFile(f dataprovider.FileInfo) error {

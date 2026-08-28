@@ -15,6 +15,7 @@ type DataProvider interface {
 	SetSourceInfo(computerName string, basePath string, acqTime int64) error
 	SourceInfo() (string, string, int64)
 	AddFile(FileInfo) error
+	RebuildDirTable(batchSize int) error
 	Finalize()
 	StartTransaction() error
 	CommitTransaction() error
