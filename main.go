@@ -19,7 +19,8 @@ import (
 )
 
 type Args struct {
-	dbFile string
+	dbFile          string
+	buildDirSummary bool
 }
 
 var args Args
@@ -63,11 +64,12 @@ func parseCmdLine() []string {
 	}
 
 	flag.StringVar(&args.dbFile, "db", "db.sqlite", "name of sqlite database to use")
+	flag.BoolVar(&args.buildDirSummary, "build-dir-summary", true, "rebuild the dir summary table from file2 after processing input files")
 	flag.Parse()
 
 	files := flag.Args()
-	// Check if at least one file is provided
-	if len(files) == 0 {
+	// If no files are provided, only allow a summary-only run when enabled.
+	if len(files) == 0 && !args.buildDirSummary {
 		flag.Usage()
 	}
 
@@ -248,6 +250,13 @@ func main() {
 	// Process files
 	for _, fn := range files {
 		err = processListFile(d, fn)
+		if err != nil {
+			panic(err)
+		}
+	}
+
+	if args.buildDirSummary {
+		err = d.RebuildDirTable(100000)
 		if err != nil {
 			panic(err)
 		}
