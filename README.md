@@ -10,4 +10,3 @@ Example usage:
   - `go run . -db db.sqlite -build-dir-summary=true`
 
 The `-build-dir-summary` flag defaults to `true`.
-
