@@ -110,7 +110,7 @@ func parseCmdLine() []string {
 // "%" is replaced by %25
 func decodeFindFilename(fn string) (string, string, int64, error) {
 	match := findFilenameRE.FindStringSubmatch(fn)
-	if match == nil || len(match) < 4 {
+	if len(match) < 4 {
 		return ``, ``, 0, errors.New("can't extract basepath/timestamp from filename")
 	}
 	basePath, err := url.QueryUnescape(match[2])
@@ -146,7 +146,7 @@ func sumSz(sz [len(timeBins)]uint64) uint64 {
 
 func parseFileInfoLine(line string) (dataprovider.FileInfo, bool) {
 	m := fileListLineRE.FindStringSubmatch(line)
-	if m == nil || len(m) < 9 || m[8] == `` {
+	if len(m) < 9 || m[8] == `` {
 		return dataprovider.FileInfo{}, false
 	}
 
