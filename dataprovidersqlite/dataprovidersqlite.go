@@ -425,6 +425,27 @@ func (d *DataProviderSqlite) SourceInfo() (string, string, int64) {
 	return d.computerName, d.basePath, d.acqTime
 }
 
+func (d *DataProviderSqlite) DataSources() ([]string, error) {
+	rows, err := d.db.Query(`SELECT pe.elem FROM path p JOIN path_elem pe ON pe.id = p.path_elem_id WHERE p.parent_id = -1 ORDER BY pe.elem`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var sources []string
+	for rows.Next() {
+		var elem string
+		if err := rows.Scan(&elem); err != nil {
+			return nil, err
+		}
+		sources = append(sources, elem)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return sources, nil
+}
+
 func (d *DataProviderSqlite) resolvePathID(dir string) (int64, error) {
 	elems := d.pathElemsForDir(dir)
 	if len(elems) == 0 {

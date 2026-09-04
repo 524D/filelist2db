@@ -176,6 +176,43 @@ func TestAddFileStoresServerShareRootAsSinglePathElement(t *testing.T) {
 	}
 }
 
+func TestDataSourcesReturnsRootNames(t *testing.T) {
+	dbFile := filepath.Join(t.TempDir(), "db.sqlite")
+	d, err := dataprovidersqlite.InitDataProviderSqlite(dbFile)
+	if err != nil {
+		t.Fatalf("InitDataProviderSqlite returned error: %v", err)
+	}
+	defer d.Finalize()
+
+	if err := d.SetSourceInfo("computername", "E:", 1000); err != nil {
+		t.Fatalf("SetSourceInfo first source returned error: %v", err)
+	}
+	if err := d.AddFile(dataprovider.FileInfo{Path: "folder/file1.txt", Size: 42, Mtime: 100, Atime: 200, Uid: 7}); err != nil {
+		t.Fatalf("AddFile first source returned error: %v", err)
+	}
+	if err := d.SetSourceInfo("", `\\server\share\Projects`, 1001); err != nil {
+		t.Fatalf("SetSourceInfo second source returned error: %v", err)
+	}
+	if err := d.AddFile(dataprovider.FileInfo{Path: "folder/file2.txt", Size: 42, Mtime: 100, Atime: 200, Uid: 7}); err != nil {
+		t.Fatalf("AddFile second source returned error: %v", err)
+	}
+
+	sources, err := d.DataSources()
+	if err != nil {
+		t.Fatalf("DataSources returned error: %v", err)
+	}
+	if len(sources) != 2 {
+		t.Fatalf("DataSources length mismatch: got %d want %d (%v)", len(sources), 2, sources)
+	}
+	seen := map[string]bool{}
+	for _, s := range sources {
+		seen[s] = true
+	}
+	if !seen["computername"] || !seen["server/share"] {
+		t.Fatalf("DataSources mismatch: got %v want roots %q and %q", sources, "computername", "server/share")
+	}
+}
+
 func TestRebuildDirTableAggregatesPerBatch(t *testing.T) {
 	dbFile := filepath.Join(t.TempDir(), "db.sqlite")
 	d, err := dataprovidersqlite.InitDataProviderSqlite(dbFile)
