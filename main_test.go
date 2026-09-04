@@ -134,6 +134,48 @@ func TestAddFileStoresPathFragments(t *testing.T) {
 
 }
 
+func TestAddFileStoresServerShareRootAsSinglePathElement(t *testing.T) {
+	dbFile := filepath.Join(t.TempDir(), "db.sqlite")
+	d, err := dataprovidersqlite.InitDataProviderSqlite(dbFile)
+	if err != nil {
+		t.Fatalf("InitDataProviderSqlite returned error: %v", err)
+	}
+	defer d.Finalize()
+
+	if err := d.SetSourceInfo("", `\\server\share\Projects`, 1000); err != nil {
+		t.Fatalf("SetSourceInfo returned error: %v", err)
+	}
+	if err := d.AddFile(dataprovider.FileInfo{Path: "folder/file.txt", Size: 42, Mtime: 100, Atime: 200, Uid: 7}); err != nil {
+		t.Fatalf("AddFile returned error: %v", err)
+	}
+
+	db, err := sql.Open("sqlite", dbFile)
+	if err != nil {
+		t.Fatalf("sql.Open returned error: %v", err)
+	}
+	defer db.Close()
+
+	var roots []string
+	rows, err := db.Query(`SELECT pe.elem FROM path p JOIN path_elem pe ON pe.id = p.path_elem_id WHERE p.parent_id = -1 ORDER BY pe.elem`)
+	if err != nil {
+		t.Fatalf("query root path elements returned error: %v", err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var elem string
+		if err := rows.Scan(&elem); err != nil {
+			t.Fatalf("scan root path element returned error: %v", err)
+		}
+		roots = append(roots, elem)
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatalf("row iteration error: %v", err)
+	}
+	if len(roots) != 1 || roots[0] != "server/share" {
+		t.Fatalf("root path elements mismatch: got %v want [%q]", roots, "server/share")
+	}
+}
+
 func TestRebuildDirTableAggregatesPerBatch(t *testing.T) {
 	dbFile := filepath.Join(t.TempDir(), "db.sqlite")
 	d, err := dataprovidersqlite.InitDataProviderSqlite(dbFile)

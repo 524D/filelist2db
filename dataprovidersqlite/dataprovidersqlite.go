@@ -274,6 +274,70 @@ func (d *DataProviderSqlite) getElemsIds(elems []string) ([]int64, error) {
 	return elemsIds, nil
 }
 
+func (d *DataProviderSqlite) sourceRootElems() []string {
+	elems := make([]string, 0, 8)
+	if d.computerName != "" {
+		elems = append(elems, d.computerName)
+	}
+	if d.basePath == "" {
+		return elems
+	}
+
+	base := strings.ReplaceAll(d.basePath, `\\`, "/")
+	base = strings.ReplaceAll(base, `\`, "/")
+	base = strings.TrimSpace(base)
+	base = strings.TrimLeft(base, "/")
+	base = strings.TrimSuffix(base, "/")
+	if base == "" {
+		return elems
+	}
+
+	if strings.HasPrefix(d.basePath, `\\`) || strings.HasPrefix(d.basePath, `//`) {
+		parts := strings.Split(base, "/")
+		if len(parts) >= 2 {
+			elems = append(elems, parts[0]+"/"+parts[1])
+			for _, part := range parts[2:] {
+				if part != "" && part != "." {
+					elems = append(elems, part)
+				}
+			}
+			return elems
+		}
+	}
+
+	if len(base) >= 2 && base[1] == ':' {
+		elems = append(elems, base[:2])
+		base = strings.TrimPrefix(base[2:], "/")
+	}
+	if base == "" {
+		return elems
+	}
+
+	for _, part := range strings.Split(base, "/") {
+		if part != "" && part != "." {
+			elems = append(elems, part)
+		}
+	}
+	return elems
+}
+
+func (d *DataProviderSqlite) pathElemsForDir(dir string) []string {
+	elems := d.sourceRootElems()
+	trimmed := strings.TrimSpace(dir)
+	if trimmed == "" || trimmed == "." {
+		return elems
+	}
+	trimmed = strings.ReplaceAll(trimmed, `\\`, "/")
+	trimmed = strings.ReplaceAll(trimmed, `\`, "/")
+	trimmed = strings.TrimLeft(trimmed, "/")
+	for _, part := range strings.Split(trimmed, "/") {
+		if part != "" && part != "." {
+			elems = append(elems, part)
+		}
+	}
+	return elems
+}
+
 func (d *DataProviderSqlite) SetSourceInfo(computerName string, basePath string, acqTime int64) error {
 	d.computerName = computerName
 	d.basePath = basePath
@@ -282,7 +346,7 @@ func (d *DataProviderSqlite) SetSourceInfo(computerName string, basePath string,
 		return err
 	}
 
-	elems := splitPath(path.Join(computerName, basePath))
+	elems := d.sourceRootElems()
 	if len(elems) == 0 {
 		return nil
 	}
@@ -362,18 +426,7 @@ func (d *DataProviderSqlite) SourceInfo() (string, string, int64) {
 }
 
 func (d *DataProviderSqlite) resolvePathID(dir string) (int64, error) {
-	trimmed := strings.TrimSpace(dir)
-	if trimmed == "" || trimmed == "." {
-		trimmed = path.Join(d.computerName, d.basePath)
-	} else {
-		trimmed = path.Join(d.computerName, d.basePath, trimmed)
-	}
-	trimmed = path.Clean(trimmed)
-	if trimmed == "." {
-		trimmed = path.Join(d.computerName, d.basePath)
-	}
-
-	elems := splitPath(trimmed)
+	elems := d.pathElemsForDir(dir)
 	if len(elems) == 0 {
 		return 0, sql.ErrNoRows
 	}
@@ -774,11 +827,8 @@ func (d *DataProviderSqlite) RebuildDirTable(batchSize int, progress dataprovide
 }
 
 func (d *DataProviderSqlite) AddFile(f dataprovider.FileInfo) error {
-	// Add computername and leading dir to path
-	fullPath := path.Join(d.computerName, d.basePath, f.Path)
-
-	// split path in elements
-	elems := splitPath(fullPath)
+	// Store the source root and the file's relative path as a single canonical path tree.
+	elems := d.pathElemsForDir(f.Path)
 
 	// add elements to path_elem table
 	elemsIds, err := d.addPathElems(elems)
