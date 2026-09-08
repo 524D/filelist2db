@@ -516,68 +516,6 @@ func (d *DataProviderSqlite) DirSizeTimeBins(dir string) ([]uint64, []uint64, []
 	return mSizes, aSizes, timeBins, nil
 }
 
-func (d *DataProviderSqlite) DirSizeModTimeBin(dir string, bin int) (uint64, error) {
-	pathID, err := d.resolvePathID(dir)
-	if err != nil {
-		return 0, err
-	}
-	var value int64
-	col := "mtime_size_1m"
-	switch bin {
-	case 0:
-		col = "mtime_size_1m"
-	case 1:
-		col = "mtime_size_3m"
-	case 2:
-		col = "mtime_size_1y"
-	case 3:
-		col = "mtime_size_3y"
-	case 4:
-		col = "mtime_size_5y"
-	default:
-		col = "mtime_size_older"
-	}
-	query := `SELECT ` + col + ` FROM dir WHERE path_id = ?`
-	if err := d.db.QueryRow(query, pathID).Scan(&value); err != nil {
-		if err == sql.ErrNoRows {
-			return 0, nil
-		}
-		return 0, err
-	}
-	return uint64(value), nil
-}
-
-func (d *DataProviderSqlite) DirSizeAccTimeBin(dir string, bin int) (uint64, error) {
-	pathID, err := d.resolvePathID(dir)
-	if err != nil {
-		return 0, err
-	}
-	var value int64
-	col := "atime_size_1m"
-	switch bin {
-	case 0:
-		col = "atime_size_1m"
-	case 1:
-		col = "atime_size_3m"
-	case 2:
-		col = "atime_size_1y"
-	case 3:
-		col = "atime_size_3y"
-	case 4:
-		col = "atime_size_5y"
-	default:
-		col = "atime_size_older"
-	}
-	query := `SELECT ` + col + ` FROM dir WHERE path_id = ?`
-	if err := d.db.QueryRow(query, pathID).Scan(&value); err != nil {
-		if err == sql.ErrNoRows {
-			return 0, nil
-		}
-		return 0, err
-	}
-	return uint64(value), nil
-}
-
 func (d *DataProviderSqlite) SubDirs(dir string) ([]string, error) {
 	pathID, err := d.resolvePathID(dir)
 	if err != nil {

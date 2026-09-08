@@ -25,8 +25,6 @@ type DataProvider interface {
 	AddFile(FileInfo) error
 	RebuildDirTable(batchSize int, progress ProgressFunc) error
 	DirExists(dir string) (bool, error)
-	DirSizeModTimeBin(dir string, bin int) (uint64, error)
-	DirSizeAccTimeBin(dir string, bin int) (uint64, error)
 	DirSizeTimeBins(dir string) ([]uint64, []uint64, []TimeBin, error)
 	SubDirs(dir string) ([]string, error)
 	SubDirSize(dir string) (uint64, error)
