@@ -478,6 +478,36 @@ func (d *DataProviderSqlite) DirExists(dir string) (bool, error) {
 	return false, err
 }
 
+var timeBins = []dataprovider.TimeBin{
+	{(3600 * 24 * 30), "< 1 month"},
+	{(3600 * 24 * 90), "1 to 3 months"},
+	{(3600 * 24 * 365), "3 to 12 months "},
+	{(3600 * 24 * 365 * 3), "1 to 3 years"},
+	{(3600 * 24 * 365 * 5), "3-5 years"},
+	{(3600 * 24 * 30) * 999, "> 5 years"},
+}
+
+func (d *DataProviderSqlite) DirSizeTimeBins(dir string) ([]uint64, []uint64, []dataprovider.TimeBin, error) {
+	pathID, err := d.resolvePathID(dir)
+	if err != nil {
+		return nil, nil, timeBins, err
+	}
+	// Obtain all time bins for the directory in a single query, to avoid multiple queries and improve performance
+	var mSizes = make([]uint64, 6)
+	var aSizes = make([]uint64, 6)
+	query := `SELECT mtime_size_1m, mtime_size_3m, mtime_size_1y, mtime_size_3y, mtime_size_5y, mtime_size_older,
+	atime_size_1m, atime_size_3m, atime_size_1y, atime_size_3y, atime_size_5y, atime_size_older
+	FROM dir WHERE path_id = ?`
+	if err := d.db.QueryRow(query, pathID).Scan(&mSizes[0], &mSizes[1], &mSizes[2], &mSizes[3], &mSizes[4], &mSizes[5],
+		&aSizes[0], &aSizes[1], &aSizes[2], &aSizes[3], &aSizes[4], &aSizes[5]); err != nil {
+		if err == sql.ErrNoRows {
+			return nil, nil, timeBins, nil
+		}
+		return nil, nil, timeBins, err
+	}
+	return mSizes, aSizes, timeBins, nil
+}
+
 func (d *DataProviderSqlite) DirSizeModTimeBin(dir string, bin int) (uint64, error) {
 	pathID, err := d.resolvePathID(dir)
 	if err != nil {

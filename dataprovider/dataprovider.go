@@ -13,6 +13,11 @@ type FileInfo struct {
 	AtimeValid bool
 }
 
+type TimeBin struct {
+	MaxAgeS uint64 // Maximum age in seconds
+	Txt     string // Textual description of time bin
+}
+
 type DataProvider interface {
 	SetSourceInfo(computerName string, basePath string, acqTime int64) error
 	SourceInfo() (string, string, int64)
@@ -22,6 +27,7 @@ type DataProvider interface {
 	DirExists(dir string) (bool, error)
 	DirSizeModTimeBin(dir string, bin int) (uint64, error)
 	DirSizeAccTimeBin(dir string, bin int) (uint64, error)
+	DirSizeTimeBins(dir string) ([]uint64, []uint64, []TimeBin, error)
 	SubDirs(dir string) ([]string, error)
 	SubDirSize(dir string) (uint64, error)
 	Finalize()
