@@ -10,6 +10,14 @@ import (
 	_ "modernc.org/sqlite"
 )
 
+// Define node types in path table
+const (
+	nodeTypeFile         = 0
+	nodeTypeDir          = 1
+	nodeTypeComputerName = 2
+	nodeTypeShareName    = 3
+)
+
 // DataProviderSqlite implements the DataProvider interface
 type DataProviderSqlite struct {
 	db              *sql.DB
@@ -55,11 +63,11 @@ func InitDataProviderSqlite(dbFile string) (dataprovider.DataProvider, error) {
 	if err != nil {
 		return nil, err
 	}
-	d.stmtSelectPath, err = db.Prepare(`SELECT id FROM path WHERE path_elem_id = ? AND parent_id = ? AND is_dir = ?`)
+	d.stmtSelectPath, err = db.Prepare(`SELECT id FROM path WHERE path_elem_id = ? AND parent_id = ? AND node_type = ?`)
 	if err != nil {
 		return nil, err
 	}
-	d.stmtInsertPath, err = db.Prepare(`INSERT INTO path (path_elem_id, parent_id, is_dir) VALUES (?, ?, ?)`)
+	d.stmtInsertPath, err = db.Prepare(`INSERT INTO path (path_elem_id, parent_id, node_type) VALUES (?, ?, ?)`)
 	if err != nil {
 		return nil, err
 	}
@@ -136,14 +144,14 @@ func createTables(db *sql.DB) error {
 		id INTEGER PRIMARY KEY,
 		parent_id INTEGER,
 		path_elem_id INTEGER,
-		is_dir INTEGER
+		node_type INTEGER
 		-- foreign keys disabled FOREIGN KEY(path_id) REFERENCES path(id)
 	)`)
 	if err != nil {
 		return err
 	}
 
-	// Should we add is_dir to the index? There is usually only one item per path element
+	// Should we add node_type to the index? There is usually only one item per path element
 	_, err = db.Exec(`CREATE INDEX IF NOT EXISTS path_elem_par_idx ON path (path_elem_id, parent_id)`)
 	if err != nil {
 		return err
@@ -459,7 +467,7 @@ func (d *DataProviderSqlite) resolvePathID(dir string) (int64, error) {
 			return 0, err
 		}
 		var id int64
-		if err := d.db.QueryRow(`SELECT id FROM path WHERE path_elem_id = ? AND parent_id = ? AND is_dir = 1`, pathElemID, parentID).Scan(&id); err != nil {
+		if err := d.db.QueryRow(`SELECT id FROM path WHERE path_elem_id = ? AND parent_id = ? AND node_type != 0`, pathElemID, parentID).Scan(&id); err != nil {
 			return 0, err
 		}
 		parentID = id
@@ -479,12 +487,12 @@ func (d *DataProviderSqlite) DirExists(dir string) (bool, error) {
 }
 
 var timeBins = []dataprovider.TimeBin{
-	{(3600 * 24 * 30), "< 1 month"},
-	{(3600 * 24 * 90), "1 to 3 months"},
-	{(3600 * 24 * 365), "3 to 12 months "},
-	{(3600 * 24 * 365 * 3), "1 to 3 years"},
-	{(3600 * 24 * 365 * 5), "3-5 years"},
-	{(3600 * 24 * 30) * 999, "> 5 years"},
+	{MaxAgeS: (3600 * 24 * 30), Txt: "< 1 month"},
+	{MaxAgeS: (3600 * 24 * 90), Txt: "1 to 3 months"},
+	{MaxAgeS: (3600 * 24 * 365), Txt: "3 to 12 months "},
+	{MaxAgeS: (3600 * 24 * 365 * 3), Txt: "1 to 3 years"},
+	{MaxAgeS: (3600 * 24 * 365 * 5), Txt: "3-5 years"},
+	{MaxAgeS: (3600 * 24 * 30) * 999, Txt: "> 5 years"},
 }
 
 func (d *DataProviderSqlite) DirSizeTimeBins(dir string) ([]uint64, []uint64, []dataprovider.TimeBin, error) {
@@ -575,7 +583,7 @@ func (d *DataProviderSqlite) SubDirs(dir string) ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
-	rows, err := d.db.Query(`SELECT pe.elem FROM path p JOIN path_elem pe ON pe.id = p.path_elem_id WHERE p.parent_id = ? AND p.is_dir = 1 ORDER BY pe.elem`, pathID)
+	rows, err := d.db.Query(`SELECT pe.elem FROM path p JOIN path_elem pe ON pe.id = p.path_elem_id WHERE p.parent_id = ? AND p.node_type != 0 ORDER BY pe.elem`, pathID)
 	if err != nil {
 		return nil, err
 	}
@@ -663,17 +671,17 @@ func (d *DataProviderSqlite) addFileDb2(f dataprovider.FileInfo, pathId int64) (
 	return id, err
 }
 
-func (d *DataProviderSqlite) ensurePath(peId int64, parentId int64, isDir int) (int64, error) {
+func (d *DataProviderSqlite) ensurePath(peId int64, parentId int64, nodeType int) (int64, error) {
 	// Add path table
 	// Return id of directory
 	// FIXME: handle situation where directory name was previously a filename or vice versa
 	// TODO: optimize, skip if same dir as previous
 
 	var id int64
-	err := d.stmtSelectPath.QueryRow(peId, parentId, isDir).Scan(&id)
+	err := d.stmtSelectPath.QueryRow(peId, parentId, nodeType).Scan(&id)
 	if err != nil {
 		// Add path to table
-		res, err := d.stmtInsertPath.Exec(peId, parentId, isDir)
+		res, err := d.stmtInsertPath.Exec(peId, parentId, nodeType)
 		if err != nil {
 			return 0, err
 		}
@@ -720,12 +728,12 @@ func dirTimeBucket(t int64, acqTime int64) int {
 func (d *DataProviderSqlite) ancestorDirIDs(pathID int64) ([]int64, error) {
 	ids := make([]int64, 0, 8)
 	for current := pathID; current > 0; {
-		var parentID, isDir int64
-		err := d.db.QueryRow(`SELECT parent_id, is_dir FROM path WHERE id = ?`, current).Scan(&parentID, &isDir)
+		var parentID, nodeType int64
+		err := d.db.QueryRow(`SELECT parent_id, node_type FROM path WHERE id = ?`, current).Scan(&parentID, &nodeType)
 		if err != nil {
 			return nil, err
 		}
-		if isDir == 1 {
+		if nodeType != nodeTypeFile {
 			ids = append(ids, current)
 		}
 		if parentID <= 0 {
@@ -889,13 +897,13 @@ func (d *DataProviderSqlite) AddFile(f dataprovider.FileInfo) error {
 	// add path elements leading up to this file to path table
 	pathId := int64(-1)
 	for _, peId := range elemsIds[:len(elemsIds)-1] {
-		pathId, err = d.ensurePath(peId, pathId, 1)
+		pathId, err = d.ensurePath(peId, pathId, nodeTypeDir)
 		if err != nil {
 			return err
 		}
 	}
-	// add file to path table (with is_dir = 0)
-	pathId, err = d.ensurePath(elemsIds[len(elemsIds)-1], pathId, 0)
+	// add file to path table (with node_type = nodeTypeFile)
+	pathId, err = d.ensurePath(elemsIds[len(elemsIds)-1], pathId, nodeTypeFile)
 	if err != nil {
 		return err
 	}

@@ -259,7 +259,7 @@ func TestRebuildDirTableAggregatesPerBatch(t *testing.T) {
 		FROM dir d
 		JOIN path p ON p.id = d.path_id
 		JOIN path_elem pe ON pe.id = p.path_elem_id
-		WHERE pe.elem = 'folder' AND p.is_dir = 1
+		WHERE pe.elem = 'folder' AND p.node_type != 0
 	`).Scan(&fileCount, &totalSize); err != nil {
 		t.Fatalf("query dir aggregate returned error: %v", err)
 	}
