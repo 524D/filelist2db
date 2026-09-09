@@ -221,6 +221,7 @@ func parseFileList(d dataprovider.DataProvider, reader io.ReadSeeker, progress d
 	if err := scanner.Err(); err != nil {
 		return err
 	}
+	progress(fileSize, fileSize)
 	return d.CommitTransaction()
 }
 

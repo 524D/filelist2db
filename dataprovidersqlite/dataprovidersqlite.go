@@ -922,7 +922,7 @@ func (d *DataProviderSqlite) RebuildDirTable(batchSize int, progress dataprovide
 		}
 		stats = make(map[int64]*dirSummary)
 	}
-
+	progress(totalRows, totalRows)
 	return nil
 }
 
