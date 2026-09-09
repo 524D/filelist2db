@@ -232,7 +232,8 @@ func processListFile(d dataprovider.DataProvider, fn string) error {
 	}
 	defer f.Close()
 
-	bar := progressbar.NewOptions(100, progressbar.OptionSetDescription("Processing file list: "+fn))
+	fmt.Println("Processing file list: " + fn)
+	bar := progressbar.NewOptions(100, progressbar.OptionSetDescription("Processing file list"))
 	bar.Set64(0)
 	progress := func(current, total int64) {
 		if total <= 0 {
@@ -274,7 +275,7 @@ func main() {
 			pct := current * 100 / total
 			bar.Set64(pct)
 		}
-		err = d.RebuildDirTable(100000, progress)
+		err = d.RebuildDirTable(10000, progress)
 		if err != nil {
 			panic(err)
 		}

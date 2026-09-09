@@ -3,6 +3,7 @@ package main
 import (
 	"database/sql"
 	"path/filepath"
+	"reflect"
 	"testing"
 	"time"
 
@@ -24,6 +25,45 @@ func TestDecodeFindFilename(t *testing.T) {
 	want := time.Date(2022, 3, 1, 13, 40, 0, 0, time.UTC).Unix()
 	if ts != want {
 		t.Fatalf("timestamp mismatch: got %d want %d", ts, want)
+	}
+}
+
+func TestInitDataProviderSqlitePreparesCommonStatements(t *testing.T) {
+	dbFile := filepath.Join(t.TempDir(), "db.sqlite")
+	d, err := dataprovidersqlite.InitDataProviderSqlite(dbFile)
+	if err != nil {
+		t.Fatalf("InitDataProviderSqlite returned error: %v", err)
+	}
+	defer d.Finalize()
+
+	v := reflect.ValueOf(d).Elem()
+	for _, name := range []string{
+		"stmtSelectPathElem",
+		"stmtInsertPathElem",
+		"stmtSelectPath",
+		"stmtInsertPath",
+		"stmtInsertFile",
+		"stmtInsertInputFile",
+		"stmtSelectPathByElemParent",
+		"stmtSelectPathByElemParentType",
+		"stmtSelectPathParentInfo",
+		"stmtSelectRootSources",
+		"stmtSelectDirSummary",
+		"stmtSelectSubDirs",
+		"stmtSelectDirTotalSize",
+		"stmtCountFiles",
+		"stmtDeleteDir",
+		"stmtSelectFileBatch",
+		"stmtBeginTransaction",
+		"stmtCommitTransaction",
+	} {
+		field := v.FieldByName(name)
+		if !field.IsValid() {
+			t.Fatalf("missing prepared statement field %q", name)
+		}
+		if field.IsNil() {
+			t.Fatalf("prepared statement field %q is nil", name)
+		}
 	}
 }
 

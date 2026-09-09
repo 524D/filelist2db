@@ -26,11 +26,24 @@ type DataProviderSqlite struct {
 	acqTime         int64
 	prevDirElemsIds []int64 // Path elements IDs of previous file
 	// Prepared statements
-	stmtSelectPathElem *sql.Stmt
-	stmtInsertPathElem *sql.Stmt
-	stmtSelectPath     *sql.Stmt
-	stmtInsertPath     *sql.Stmt
-	stmtInsertFile     *sql.Stmt
+	stmtSelectPathElem             *sql.Stmt
+	stmtInsertPathElem             *sql.Stmt
+	stmtSelectPath                 *sql.Stmt
+	stmtInsertPath                 *sql.Stmt
+	stmtInsertFile                 *sql.Stmt
+	stmtInsertInputFile            *sql.Stmt
+	stmtSelectPathByElemParent     *sql.Stmt
+	stmtSelectPathByElemParentType *sql.Stmt
+	stmtSelectPathParentInfo       *sql.Stmt
+	stmtSelectRootSources          *sql.Stmt
+	stmtSelectDirSummary           *sql.Stmt
+	stmtSelectSubDirs              *sql.Stmt
+	stmtSelectDirTotalSize         *sql.Stmt
+	stmtCountFiles                 *sql.Stmt
+	stmtDeleteDir                  *sql.Stmt
+	stmtSelectFileBatch            *sql.Stmt
+	stmtBeginTransaction           *sql.Stmt
+	stmtCommitTransaction          *sql.Stmt
 }
 
 func InitDataProviderSqlite(dbFile string) (dataprovider.DataProvider, error) {
@@ -75,6 +88,60 @@ func InitDataProviderSqlite(dbFile string) (dataprovider.DataProvider, error) {
 	if err != nil {
 		return nil, err
 	}
+	d.stmtInsertInputFile, err = db.Prepare(`INSERT INTO input_file (timestamp) VALUES (?)`)
+	if err != nil {
+		return nil, err
+	}
+	d.stmtSelectPathByElemParent, err = db.Prepare(`SELECT id FROM path WHERE path_elem_id = ? AND parent_id = ?`)
+	if err != nil {
+		return nil, err
+	}
+	d.stmtSelectPathByElemParentType, err = db.Prepare(`SELECT id FROM path WHERE path_elem_id = ? AND parent_id = ? AND node_type != 0`)
+	if err != nil {
+		return nil, err
+	}
+	d.stmtSelectPathParentInfo, err = db.Prepare(`SELECT parent_id, node_type FROM path WHERE id = ?`)
+	if err != nil {
+		return nil, err
+	}
+	d.stmtSelectRootSources, err = db.Prepare(`SELECT pe.elem FROM path p JOIN path_elem pe ON pe.id = p.path_elem_id WHERE p.parent_id = -1 ORDER BY pe.elem`)
+	if err != nil {
+		return nil, err
+	}
+	d.stmtSelectDirSummary, err = db.Prepare(`SELECT mtime_size_1m, mtime_size_3m, mtime_size_1y, mtime_size_3y, mtime_size_5y, mtime_size_older,
+		atime_size_1m, atime_size_3m, atime_size_1y, atime_size_3y, atime_size_5y, atime_size_older
+		FROM dir WHERE path_id = ?`)
+	if err != nil {
+		return nil, err
+	}
+	d.stmtSelectSubDirs, err = db.Prepare(`SELECT pe.elem FROM path p JOIN path_elem pe ON pe.id = p.path_elem_id WHERE p.parent_id = ? AND p.node_type != 0 ORDER BY pe.elem`)
+	if err != nil {
+		return nil, err
+	}
+	d.stmtSelectDirTotalSize, err = db.Prepare(`SELECT total_size FROM dir WHERE path_id = ?`)
+	if err != nil {
+		return nil, err
+	}
+	d.stmtCountFiles, err = db.Prepare(`SELECT COUNT(*) FROM file2`)
+	if err != nil {
+		return nil, err
+	}
+	d.stmtDeleteDir, err = db.Prepare(`DELETE FROM dir`)
+	if err != nil {
+		return nil, err
+	}
+	d.stmtSelectFileBatch, err = db.Prepare(`SELECT path_id, size, mtime, atime FROM file2 ORDER BY id LIMIT ? OFFSET ?`)
+	if err != nil {
+		return nil, err
+	}
+	d.stmtBeginTransaction, err = db.Prepare(`BEGIN TRANSACTION`)
+	if err != nil {
+		return nil, err
+	}
+	d.stmtCommitTransaction, err = db.Prepare(`END TRANSACTION`)
+	if err != nil {
+		return nil, err
+	}
 
 	return &d, nil
 }
@@ -95,6 +162,45 @@ func (d *DataProviderSqlite) Finalize() {
 	}
 	if d.stmtInsertFile != nil {
 		d.stmtInsertFile.Close()
+	}
+	if d.stmtInsertInputFile != nil {
+		d.stmtInsertInputFile.Close()
+	}
+	if d.stmtSelectPathByElemParent != nil {
+		d.stmtSelectPathByElemParent.Close()
+	}
+	if d.stmtSelectPathByElemParentType != nil {
+		d.stmtSelectPathByElemParentType.Close()
+	}
+	if d.stmtSelectPathParentInfo != nil {
+		d.stmtSelectPathParentInfo.Close()
+	}
+	if d.stmtSelectRootSources != nil {
+		d.stmtSelectRootSources.Close()
+	}
+	if d.stmtSelectDirSummary != nil {
+		d.stmtSelectDirSummary.Close()
+	}
+	if d.stmtSelectSubDirs != nil {
+		d.stmtSelectSubDirs.Close()
+	}
+	if d.stmtSelectDirTotalSize != nil {
+		d.stmtSelectDirTotalSize.Close()
+	}
+	if d.stmtCountFiles != nil {
+		d.stmtCountFiles.Close()
+	}
+	if d.stmtDeleteDir != nil {
+		d.stmtDeleteDir.Close()
+	}
+	if d.stmtSelectFileBatch != nil {
+		d.stmtSelectFileBatch.Close()
+	}
+	if d.stmtBeginTransaction != nil {
+		d.stmtBeginTransaction.Close()
+	}
+	if d.stmtCommitTransaction != nil {
+		d.stmtCommitTransaction.Close()
 	}
 	d.db.Close()
 }
@@ -272,7 +378,7 @@ func (d *DataProviderSqlite) getElemsIds(elems []string) ([]int64, error) {
 	elemsIds := make([]int64, 0, len(elems))
 	for _, e := range elems {
 		var id int64
-		err := d.db.QueryRow(`SELECT id FROM path_elem WHERE elem = ?`, e).Scan(&id)
+		err := d.stmtSelectPathElem.QueryRow(e).Scan(&id)
 		if err != nil {
 			return nil, err
 		}
@@ -350,7 +456,7 @@ func (d *DataProviderSqlite) SetSourceInfo(computerName string, basePath string,
 	d.computerName = computerName
 	d.basePath = basePath
 	d.acqTime = acqTime
-	if _, err := d.db.Exec(`INSERT INTO input_file (timestamp) VALUES (?)`, d.acqTime); err != nil {
+	if _, err := d.stmtInsertInputFile.Exec(d.acqTime); err != nil {
 		return err
 	}
 
@@ -369,7 +475,7 @@ func (d *DataProviderSqlite) SetSourceInfo(computerName string, basePath string,
 	parentId := int64(-1)
 	for _, peId := range elemsIds {
 		var id int64
-		err := d.db.QueryRow(`SELECT id FROM path WHERE path_elem_id = ? AND parent_id = ?`, peId, parentId).Scan(&id)
+		err := d.stmtSelectPathByElemParent.QueryRow(peId, parentId).Scan(&id)
 		if err != nil {
 			// not found, nothing to delete
 			return nil
@@ -434,7 +540,7 @@ func (d *DataProviderSqlite) SourceInfo() (string, string, int64) {
 }
 
 func (d *DataProviderSqlite) DataSources() ([]string, error) {
-	rows, err := d.db.Query(`SELECT pe.elem FROM path p JOIN path_elem pe ON pe.id = p.path_elem_id WHERE p.parent_id = -1 ORDER BY pe.elem`)
+	rows, err := d.stmtSelectRootSources.Query()
 	if err != nil {
 		return nil, err
 	}
@@ -463,11 +569,11 @@ func (d *DataProviderSqlite) resolvePathID(dir string) (int64, error) {
 	parentID := int64(-1)
 	for _, elem := range elems {
 		var pathElemID int64
-		if err := d.db.QueryRow(`SELECT id FROM path_elem WHERE elem = ?`, elem).Scan(&pathElemID); err != nil {
+		if err := d.stmtSelectPathElem.QueryRow(elem).Scan(&pathElemID); err != nil {
 			return 0, err
 		}
 		var id int64
-		if err := d.db.QueryRow(`SELECT id FROM path WHERE path_elem_id = ? AND parent_id = ? AND node_type != 0`, pathElemID, parentID).Scan(&id); err != nil {
+		if err := d.stmtSelectPathByElemParentType.QueryRow(pathElemID, parentID).Scan(&id); err != nil {
 			return 0, err
 		}
 		parentID = id
@@ -503,10 +609,7 @@ func (d *DataProviderSqlite) DirSizeTimeBins(dir string) ([]uint64, []uint64, []
 	// Obtain all time bins for the directory in a single query, to avoid multiple queries and improve performance
 	var mSizes = make([]uint64, 6)
 	var aSizes = make([]uint64, 6)
-	query := `SELECT mtime_size_1m, mtime_size_3m, mtime_size_1y, mtime_size_3y, mtime_size_5y, mtime_size_older,
-	atime_size_1m, atime_size_3m, atime_size_1y, atime_size_3y, atime_size_5y, atime_size_older
-	FROM dir WHERE path_id = ?`
-	if err := d.db.QueryRow(query, pathID).Scan(&mSizes[0], &mSizes[1], &mSizes[2], &mSizes[3], &mSizes[4], &mSizes[5],
+	if err := d.stmtSelectDirSummary.QueryRow(pathID).Scan(&mSizes[0], &mSizes[1], &mSizes[2], &mSizes[3], &mSizes[4], &mSizes[5],
 		&aSizes[0], &aSizes[1], &aSizes[2], &aSizes[3], &aSizes[4], &aSizes[5]); err != nil {
 		if err == sql.ErrNoRows {
 			return nil, nil, timeBins, nil
@@ -521,7 +624,7 @@ func (d *DataProviderSqlite) SubDirs(dir string) ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
-	rows, err := d.db.Query(`SELECT pe.elem FROM path p JOIN path_elem pe ON pe.id = p.path_elem_id WHERE p.parent_id = ? AND p.node_type != 0 ORDER BY pe.elem`, pathID)
+	rows, err := d.stmtSelectSubDirs.Query(pathID)
 	if err != nil {
 		return nil, err
 	}
@@ -543,7 +646,7 @@ func (d *DataProviderSqlite) SubDirSize(dir string) (uint64, error) {
 		return 0, err
 	}
 	var totalSize int64
-	if err := d.db.QueryRow(`SELECT total_size FROM dir WHERE path_id = ?`, pathID).Scan(&totalSize); err != nil {
+	if err := d.stmtSelectDirTotalSize.QueryRow(pathID).Scan(&totalSize); err != nil {
 		if err == sql.ErrNoRows {
 			return 0, nil
 		}
@@ -667,7 +770,7 @@ func (d *DataProviderSqlite) ancestorDirIDs(pathID int64) ([]int64, error) {
 	ids := make([]int64, 0, 8)
 	for current := pathID; current > 0; {
 		var parentID, nodeType int64
-		err := d.db.QueryRow(`SELECT parent_id, node_type FROM path WHERE id = ?`, current).Scan(&parentID, &nodeType)
+		err := d.stmtSelectPathParentInfo.QueryRow(current).Scan(&parentID, &nodeType)
 		if err != nil {
 			return nil, err
 		}
@@ -749,18 +852,18 @@ func (d *DataProviderSqlite) RebuildDirTable(batchSize int, progress dataprovide
 	}
 
 	var totalRows int64
-	if err := d.db.QueryRow(`SELECT COUNT(*) FROM file2`).Scan(&totalRows); err != nil {
+	if err := d.stmtCountFiles.QueryRow().Scan(&totalRows); err != nil {
 		return err
 	}
 
-	if _, err := d.db.Exec(`DELETE FROM dir`); err != nil {
+	if _, err := d.stmtDeleteDir.Exec(); err != nil {
 		return err
 	}
 
 	stats := make(map[int64]*dirSummary)
 	processedTotal := int64(0)
 	for offset := 0; ; offset += batchSize {
-		rows, err := d.db.Query(`SELECT path_id, size, mtime, atime FROM file2 ORDER BY id LIMIT ? OFFSET ?`, batchSize, offset)
+		rows, err := d.stmtSelectFileBatch.Query(batchSize, offset)
 		if err != nil {
 			return err
 		}
@@ -891,12 +994,12 @@ func (d *DataProviderSqlite) AddFile(f dataprovider.FileInfo) error {
 }
 
 func (d *DataProviderSqlite) StartTransaction() error {
-	_, err := d.db.Exec(`BEGIN TRANSACTION`)
+	_, err := d.stmtBeginTransaction.Exec()
 	return err
 }
 
 func (d *DataProviderSqlite) CommitTransaction() error {
-	_, err := d.db.Exec(`END TRANSACTION`)
+	_, err := d.stmtCommitTransaction.Exec()
 	return err
 }
 
