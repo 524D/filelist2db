@@ -347,10 +347,6 @@ func createTables(db *sql.DB) error {
 	if err != nil {
 		return err
 	}
-	_, err = db.Exec(`CREATE INDEX IF NOT EXISTS dir_path_idx ON dir (path_id)`)
-	if err != nil {
-		return err
-	}
 
 	return nil
 }
