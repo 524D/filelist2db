@@ -431,7 +431,7 @@ func (d *DataProviderSqlite) sourceRootElems() []string {
 	return elems
 }
 
-func (d *DataProviderSqlite) pathElemsForDir(dir string) []string {
+func (d *DataProviderSqlite) pathElems(dir string) []string {
 	elems := d.sourceRootElems()
 	trimmed := strings.TrimSpace(dir)
 	if trimmed == "" || trimmed == "." {
@@ -557,7 +557,7 @@ func (d *DataProviderSqlite) DataSources() ([]string, error) {
 }
 
 func (d *DataProviderSqlite) resolvePathID(dir string) (int64, error) {
-	elems := d.pathElemsForDir(dir)
+	elems := d.pathElems(dir)
 	if len(elems) == 0 {
 		return 0, sql.ErrNoRows
 	}
@@ -594,7 +594,7 @@ var timeBins = []dataprovider.TimeBin{
 	{MaxAgeS: (3600 * 24 * 365), Txt: "3 to 12 months "},
 	{MaxAgeS: (3600 * 24 * 365 * 3), Txt: "1 to 3 years"},
 	{MaxAgeS: (3600 * 24 * 365 * 5), Txt: "3-5 years"},
-	{MaxAgeS: (3600 * 24 * 30) * 999, Txt: "> 5 years"},
+	{MaxAgeS: (3600 * 24 * 365 * 999), Txt: "> 5 years"},
 }
 
 func (d *DataProviderSqlite) DirSizeTimeBins(dir string) ([]uint64, []uint64, []dataprovider.TimeBin, error) {
@@ -739,27 +739,14 @@ type dirSummary struct {
 	acqtimeMax int64
 }
 
-type dirTimeBin struct {
-	maxAgeS int64
-}
-
-var dirTimeBins = [...]dirTimeBin{
-	{maxAgeS: 3600 * 24 * 30},
-	{maxAgeS: 3600 * 24 * 90},
-	{maxAgeS: 3600 * 24 * 365},
-	{maxAgeS: 3600 * 24 * 365 * 3},
-	{maxAgeS: 3600 * 24 * 365 * 5},
-	{maxAgeS: 3600 * 24 * 30 * 999},
-}
-
 func dirTimeBucket(t int64, acqTime int64) int {
 	age := acqTime - t
-	for i, tb := range dirTimeBins {
-		if age < tb.maxAgeS {
+	for i, tb := range timeBins {
+		if age < int64(tb.MaxAgeS) {
 			return i
 		}
 	}
-	return len(dirTimeBins) - 1
+	return len(timeBins) - 1
 }
 
 func (d *DataProviderSqlite) ancestorDirIDs(pathID int64) ([]int64, error) {
@@ -924,7 +911,7 @@ func (d *DataProviderSqlite) RebuildDirTable(batchSize int, progress dataprovide
 
 func (d *DataProviderSqlite) AddFile(f dataprovider.FileInfo) error {
 	// Store the source root and the file's relative path as a single canonical path tree.
-	elems := d.pathElemsForDir(f.Path)
+	elems := d.pathElems(f.Path)
 
 	// add elements to path_elem table
 	elemsIds, err := d.addPathElems(elems)
