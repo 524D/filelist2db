@@ -9,6 +9,7 @@ import (
 	"net/url"
 	"os"
 	"regexp"
+	"runtime/pprof"
 	"strconv"
 	"time"
 
@@ -21,6 +22,7 @@ import (
 type Args struct {
 	dbFile          string
 	buildDirSummary bool
+	cpuProfile      string
 }
 
 var args Args
@@ -59,12 +61,14 @@ func parseCmdLine() []string {
 		fmt.Fprintln(w, "Where <filex> is a list of files with metadata.")
 		fmt.Fprintln(w, "This list is generally created with a Unix 'find' command:")
 		fmt.Fprintf(w, "  find ${DIR} -type f -printf '%%s\\t%%U\\t%%i\\t%%n\\t%%T@\\t%%A@\\t%%C@\\t%%P\\n'\n")
+		fmt.Fprintln(w, "To visualize a CPU profile: go tool pprof -http=:8080 <profile-file>")
 		fmt.Fprintln(w, "Flags:")
 		flag.PrintDefaults()
 	}
 
 	flag.StringVar(&args.dbFile, "db", "db.sqlite", "name of sqlite database to use")
 	flag.BoolVar(&args.buildDirSummary, "build-dir-summary", true, "rebuild the dir summary table from file2 after processing input files")
+	flag.StringVar(&args.cpuProfile, "cpuprofile", "", "write a CPU profile to this file; visualize with: go tool pprof -http=:8080 <profile-file>")
 	flag.Parse()
 
 	files := flag.Args()
@@ -248,6 +252,17 @@ func processListFile(d dataprovider.DataProvider, fn string) error {
 func main() {
 	// Parse command line arguments
 	files := parseCmdLine()
+
+	if args.cpuProfile != "" {
+		f, err := os.Create(args.cpuProfile)
+		if err != nil {
+			panic(err)
+		}
+		if err := pprof.StartCPUProfile(f); err != nil {
+			panic(err)
+		}
+		defer pprof.StopCPUProfile()
+	}
 
 	// Create data provider
 	d, err := dataprovidersqlite.InitDataProviderSqlite(args.dbFile)
