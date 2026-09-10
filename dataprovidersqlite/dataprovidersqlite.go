@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"path"
 	"regexp"
+	"slices"
 	"strings"
 
 	"github.com/524D/filelist2db/dataprovider"
@@ -28,6 +29,7 @@ type DataProviderSqlite struct {
 	prevDir             string  // Directory of previous file
 	prevPathId          int64   // Path ID of previous file
 	ancestorDirIDsCache []int64 // Ancestor dir IDs for the last path we resolved
+	prevAncestorDirs    []int64 // Ancestor dir IDs for the previous file
 	// Prepared statements
 	stmtSelectPathElem             *sql.Stmt
 	stmtInsertPathElem             *sql.Stmt
@@ -742,10 +744,10 @@ func (d *DataProviderSqlite) ensurePath(peId int64, parentId int64, nodeType int
 type dirSummary struct {
 	fileCount  int64
 	totalSize  int64
-	mtimeSize  [6]int64
-	atimeSize  [6]int64
-	acqtimeMin int64
-	acqtimeMax int64
+	mTimeSize  [6]int64
+	aTimeSize  [6]int64
+	acqTimeMin int64
+	acqTimeMax int64
 }
 
 func dirTimeBucket(t int64, acqTime int64) int {
@@ -782,6 +784,8 @@ func (d *DataProviderSqlite) ancestorDirIDs(pathID int64) ([]int64, error) {
 		}
 		current = parentID
 	}
+	// Reverse the slice to have the root directory first
+	slices.Reverse(ids)
 	// Cache the result
 	d.ancestorDirIDsCache = ids
 	return ids, nil
@@ -826,20 +830,20 @@ func (d *DataProviderSqlite) flushDirSummaryBatch(stats map[int64]*dirSummary) e
 			pathID,
 			summary.fileCount,
 			summary.totalSize,
-			summary.acqtimeMin,
-			summary.acqtimeMax,
-			summary.mtimeSize[0],
-			summary.mtimeSize[1],
-			summary.mtimeSize[2],
-			summary.mtimeSize[3],
-			summary.mtimeSize[4],
-			summary.mtimeSize[5],
-			summary.atimeSize[0],
-			summary.atimeSize[1],
-			summary.atimeSize[2],
-			summary.atimeSize[3],
-			summary.atimeSize[4],
-			summary.atimeSize[5],
+			summary.acqTimeMin,
+			summary.acqTimeMax,
+			summary.mTimeSize[0],
+			summary.mTimeSize[1],
+			summary.mTimeSize[2],
+			summary.mTimeSize[3],
+			summary.mTimeSize[4],
+			summary.mTimeSize[5],
+			summary.aTimeSize[0],
+			summary.aTimeSize[1],
+			summary.aTimeSize[2],
+			summary.aTimeSize[3],
+			summary.aTimeSize[4],
+			summary.aTimeSize[5],
 		)
 		if err != nil {
 			return err
@@ -853,6 +857,7 @@ func (d *DataProviderSqlite) RebuildDirTable(batchSize int, progress dataprovide
 		batchSize = 1000
 	}
 
+	// Get the total number of files to process, for progress reporting
 	var totalRows int64
 	if err := d.stmtCountFiles.QueryRow().Scan(&totalRows); err != nil {
 		return err
@@ -865,6 +870,7 @@ func (d *DataProviderSqlite) RebuildDirTable(batchSize int, progress dataprovide
 	stats := make(map[int64]*dirSummary)
 	processedTotal := int64(0)
 	for offset := 0; ; offset += batchSize {
+		statsToFlush := make(map[int64]*dirSummary)
 		rows, err := d.stmtSelectFileBatch.Query(batchSize, offset)
 		if err != nil {
 			return err
@@ -888,23 +894,34 @@ func (d *DataProviderSqlite) RebuildDirTable(batchSize int, progress dataprovide
 				rows.Close()
 				return err
 			}
+			// Check if in the chain of ancestors, elements are changed/removed compared to the previous file.
+			//  If so, we update the dir table for those directories because no more files are expected to be added to those directories.
+			for i, aDir := range d.prevAncestorDirs {
+				if i >= len(dirs) || aDir != dirs[i] {
+					// Ancestors are different from the previous files,
+					// flush the stats for the previous ancestors to the dir table
+					statsToFlush[aDir] = stats[aDir]
+				}
+			}
+			d.prevAncestorDirs = dirs
+
 			for _, dirID := range dirs {
 				sum := stats[dirID]
 				if sum == nil {
-					sum = &dirSummary{acqtimeMin: d.acqTime, acqtimeMax: d.acqTime}
+					sum = &dirSummary{acqTimeMin: d.acqTime, acqTimeMax: d.acqTime}
 					stats[dirID] = sum
 				}
 				sum.fileCount++
 				sum.totalSize += size
 				mtimeBucket := dirTimeBucket(mtime, d.acqTime)
-				sum.mtimeSize[mtimeBucket] += size
+				sum.mTimeSize[mtimeBucket] += size
 				atimeBucket := dirTimeBucket(atime, d.acqTime)
-				sum.atimeSize[atimeBucket] += size
-				if sum.acqtimeMin == 0 || d.acqTime < sum.acqtimeMin {
-					sum.acqtimeMin = d.acqTime
+				sum.aTimeSize[atimeBucket] += size
+				if sum.acqTimeMin == 0 || d.acqTime < sum.acqTimeMin {
+					sum.acqTimeMin = d.acqTime
 				}
-				if d.acqTime > sum.acqtimeMax {
-					sum.acqtimeMax = d.acqTime
+				if d.acqTime > sum.acqTimeMax {
+					sum.acqTimeMax = d.acqTime
 				}
 			}
 		}
@@ -916,13 +933,21 @@ func (d *DataProviderSqlite) RebuildDirTable(batchSize int, progress dataprovide
 		if !processed {
 			break
 		}
+		// Flush the stats for the directories that are no longer in the ancestor chain
+		if err := d.flushDirSummaryBatch(statsToFlush); err != nil {
+			return err
+		}
+		for aDir := range statsToFlush {
+			delete(stats, aDir)
+		}
+		statsToFlush = make(map[int64]*dirSummary)
+
 		if progress != nil {
 			progress(processedTotal, totalRows)
 		}
-		if err := d.flushDirSummaryBatch(stats); err != nil {
-			return err
-		}
-		stats = make(map[int64]*dirSummary)
+	}
+	if err := d.flushDirSummaryBatch(stats); err != nil {
+		return err
 	}
 	progress(totalRows, totalRows)
 	return nil
