@@ -914,18 +914,15 @@ func (d *DataProviderSqlite) RebuildDirTable(batchSize int, progress dataprovide
 }
 
 func (d *DataProviderSqlite) AddFile(f dataprovider.FileInfo) error {
-	// Check if the file's directory is the same as the previous file's directory.
-	// If so, we can skip adding the path elements to the path table again.
-	// The previous directory's element id is cached in d.prevDirElemsId
-
 	pathId := int64(-1)
 	var elemsIds []int64
 	var err error
 	var fileId int64
-	// Get the directory name by removing the last element from the file's path
-	// Split the path in the directory and the file name, using path.Dir and path.Base
-	dir := path.Dir(f.Path)
 
+	// Check if the file's directory is the same as the previous file's directory.
+	// If so, we can skip adding the path elements to the path table again.
+	// The previous directory's element id is cached in d.prevDirElemsId
+	dir := path.Dir(f.Path)
 	if dir == d.prevDir {
 		// Same directory as previous file, skip adding path elements
 		pathId = d.prevPathId
