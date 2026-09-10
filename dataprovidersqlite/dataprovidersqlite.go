@@ -20,13 +20,14 @@ const (
 
 // DataProviderSqlite implements the DataProvider interface
 type DataProviderSqlite struct {
-	db              *sql.DB
-	computerName    string
-	basePath        string
-	acqTime         int64
-	prevDirElemsIds []int64 // Path elements IDs of previous file
-	prevDir         string  // Directory of previous file
-	prevPathId      int64   // Path ID of previous file
+	db                  *sql.DB
+	computerName        string
+	basePath            string
+	acqTime             int64
+	prevDirElemsIds     []int64 // Path elements IDs of previous file
+	prevDir             string  // Directory of previous file
+	prevPathId          int64   // Path ID of previous file
+	ancestorDirIDsCache []int64 // Ancestor dir IDs for the last path we resolved
 	// Prepared statements
 	stmtSelectPathElem             *sql.Stmt
 	stmtInsertPathElem             *sql.Stmt
@@ -132,7 +133,10 @@ func InitDataProviderSqlite(dbFile string) (dataprovider.DataProvider, error) {
 	if err != nil {
 		return nil, err
 	}
-	d.stmtSelectFileBatch, err = db.Prepare(`SELECT path_id, size, mtime, atime FROM file ORDER BY id LIMIT ? OFFSET ?`)
+	d.stmtSelectFileBatch, err = db.Prepare(`SELECT f.path_id, p.parent_id, f.size, f.mtime, f.atime
+		FROM file f
+		JOIN path p ON p.id = f.path_id
+		ORDER BY f.id LIMIT ? OFFSET ?`)
 	if err != nil {
 		return nil, err
 	}
@@ -456,6 +460,7 @@ func (d *DataProviderSqlite) SetSourceInfo(computerName string, basePath string,
 	d.computerName = computerName
 	d.basePath = basePath
 	d.acqTime = acqTime
+	d.ancestorDirIDsCache = nil
 	if _, err := d.stmtInsertInputFile.Exec(d.acqTime); err != nil {
 		return err
 	}
@@ -754,6 +759,14 @@ func dirTimeBucket(t int64, acqTime int64) int {
 }
 
 func (d *DataProviderSqlite) ancestorDirIDs(pathID int64) ([]int64, error) {
+	// Check if the path is in the cache
+	if len(d.ancestorDirIDsCache) > 0 {
+		// If the first element in the cache is the same as the pathID, we can return the cache
+		if d.ancestorDirIDsCache[0] == pathID {
+			return d.ancestorDirIDsCache, nil
+		}
+	}
+
 	ids := make([]int64, 0, 8)
 	for current := pathID; current > 0; {
 		var parentID, nodeType int64
@@ -769,6 +782,8 @@ func (d *DataProviderSqlite) ancestorDirIDs(pathID int64) ([]int64, error) {
 		}
 		current = parentID
 	}
+	// Cache the result
+	d.ancestorDirIDsCache = ids
 	return ids, nil
 }
 
@@ -860,15 +875,15 @@ func (d *DataProviderSqlite) RebuildDirTable(batchSize int, progress dataprovide
 			processed = true
 			processedTotal++
 			var pathID int64
+			var ancestorPathID int64
 			var size int64
 			var mtime int64
 			var atime int64
-			if err := rows.Scan(&pathID, &size, &mtime, &atime); err != nil {
+			if err := rows.Scan(&pathID, &ancestorPathID, &size, &mtime, &atime); err != nil {
 				rows.Close()
 				return err
 			}
-
-			dirs, err := d.ancestorDirIDs(pathID)
+			dirs, err := d.ancestorDirIDs(ancestorPathID)
 			if err != nil {
 				rows.Close()
 				return err
