@@ -25,6 +25,8 @@ type DataProviderSqlite struct {
 	basePath        string
 	acqTime         int64
 	prevDirElemsIds []int64 // Path elements IDs of previous file
+	prevDir         string  // Directory of previous file
+	prevPathId      int64   // Path ID of previous file
 	// Prepared statements
 	stmtSelectPathElem             *sql.Stmt
 	stmtInsertPathElem             *sql.Stmt
@@ -431,6 +433,8 @@ func (d *DataProviderSqlite) sourceRootElems() []string {
 	return elems
 }
 
+// Get a slice with the path elements for a given directory, including the source root
+// The source root is defined by the computer name and base path set in SetSourceInfo
 func (d *DataProviderSqlite) pathElems(dir string) []string {
 	elems := d.sourceRootElems()
 	trimmed := strings.TrimSpace(dir)
@@ -910,27 +914,56 @@ func (d *DataProviderSqlite) RebuildDirTable(batchSize int, progress dataprovide
 }
 
 func (d *DataProviderSqlite) AddFile(f dataprovider.FileInfo) error {
-	// Store the source root and the file's relative path as a single canonical path tree.
-	elems := d.pathElems(f.Path)
+	// Check if the file's directory is the same as the previous file's directory.
+	// If so, we can skip adding the path elements to the path table again.
+	// The previous directory's element id is cached in d.prevDirElemsId
 
-	// add elements to path_elem table
-	elemsIds, err := d.addPathElems(elems)
-	if err != nil {
-		return err
-	}
-	// add path elements leading up to this file to path table
 	pathId := int64(-1)
-	for _, peId := range elemsIds[:len(elemsIds)-1] {
-		pathId, err = d.ensurePath(peId, pathId, nodeTypeDir)
+	var elemsIds []int64
+	var err error
+	var fileId int64
+	// Get the directory name by removing the last element from the file's path
+	// Split the path in the directory and the file name, using path.Dir and path.Base
+	dir := path.Dir(f.Path)
+
+	if dir == d.prevDir {
+		// Same directory as previous file, skip adding path elements
+		pathId = d.prevPathId
+		file := path.Base(f.Path)
+		elems := []string{file}
+		elemsIds, err = d.addPathElems(elems)
 		if err != nil {
 			return err
 		}
+		fileId = elemsIds[0]
+	} else {
+
+		// Store the source root and the file's relative path as a single canonical path tree.
+		elems := d.pathElems(f.Path)
+
+		// add elements to path_elem table
+		elemsIds, err := d.addPathElems(elems)
+		if err != nil {
+			return err
+		}
+		// add path elements leading up to this file to path table
+		pathId = int64(-1)
+		for _, peId := range elemsIds[:len(elemsIds)-1] {
+			pathId, err = d.ensurePath(peId, pathId, nodeTypeDir)
+			if err != nil {
+				return err
+			}
+		}
+		d.prevDir = dir
+		d.prevPathId = pathId
+		fileId = elemsIds[len(elemsIds)-1]
 	}
 	// add file to path table (with node_type = nodeTypeFile)
-	pathId, err = d.ensurePath(elemsIds[len(elemsIds)-1], pathId, nodeTypeFile)
+	pathId, err = d.ensurePath(fileId, pathId, nodeTypeFile)
 	if err != nil {
 		return err
 	}
+
 	// Add file info to file table
 	_, err = d.addFileDb2(f, pathId)
 
@@ -939,15 +972,15 @@ func (d *DataProviderSqlite) AddFile(f dataprovider.FileInfo) error {
 	// when the a new path element is encountered
 
 	// Store the path elements IDs if we don't have them yet
-	if d.prevDirElemsIds == nil {
-		d.prevDirElemsIds = elemsIds[:len(elemsIds)-1]
-	} else {
-		// Skip over common prefix of previous and current path elements
-		i := 0
-		for ; i < len(d.prevDirElemsIds) && i < len(elemsIds) && d.prevDirElemsIds[i] == elemsIds[i]; i++ {
-		}
-		// If file is in a new directory, write dir table for paths of higher dir levels
-	}
+	// if d.prevDirElemsIds == nil {
+	// 	d.prevDirElemsIds = elemsIds[:len(elemsIds)-1]
+	// } else {
+	// 	// Skip over common prefix of previous and current path elements
+	// 	i := 0
+	// 	for ; i < len(d.prevDirElemsIds) && i < len(elemsIds) && d.prevDirElemsIds[i] == elemsIds[i]; i++ {
+	// 	}
+	// 	// If file is in a new directory, write dir table for paths of higher dir levels
+	// }
 
 	// FIXME: write dir info after the very last file
 
