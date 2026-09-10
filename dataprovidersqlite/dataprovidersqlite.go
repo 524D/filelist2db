@@ -86,7 +86,7 @@ func InitDataProviderSqlite(dbFile string) (dataprovider.DataProvider, error) {
 	if err != nil {
 		return nil, err
 	}
-	d.stmtInsertFile, err = db.Prepare(`INSERT INTO file2 (path_id, size, mtime, atime, uid) VALUES (?, ?, ?, ?, ?)`)
+	d.stmtInsertFile, err = db.Prepare(`INSERT INTO file (path_id, size, mtime, atime, uid) VALUES (?, ?, ?, ?, ?)`)
 	if err != nil {
 		return nil, err
 	}
@@ -124,7 +124,7 @@ func InitDataProviderSqlite(dbFile string) (dataprovider.DataProvider, error) {
 	if err != nil {
 		return nil, err
 	}
-	d.stmtCountFiles, err = db.Prepare(`SELECT COUNT(*) FROM file2`)
+	d.stmtCountFiles, err = db.Prepare(`SELECT COUNT(*) FROM file`)
 	if err != nil {
 		return nil, err
 	}
@@ -132,7 +132,7 @@ func InitDataProviderSqlite(dbFile string) (dataprovider.DataProvider, error) {
 	if err != nil {
 		return nil, err
 	}
-	d.stmtSelectFileBatch, err = db.Prepare(`SELECT path_id, size, mtime, atime FROM file2 ORDER BY id LIMIT ? OFFSET ?`)
+	d.stmtSelectFileBatch, err = db.Prepare(`SELECT path_id, size, mtime, atime FROM file ORDER BY id LIMIT ? OFFSET ?`)
 	if err != nil {
 		return nil, err
 	}
@@ -265,7 +265,7 @@ func createTables(db *sql.DB) error {
 		return err
 	}
 
-	_, err = db.Exec(`CREATE TABLE IF NOT EXISTS file2 (
+	_, err = db.Exec(`CREATE TABLE IF NOT EXISTS file (
 		id INTEGER PRIMARY KEY,
 		path_id INTEGER,
 		size INTEGER,
@@ -337,11 +337,11 @@ func createTables(db *sql.DB) error {
 		return err
 	}
 	// Add indexes for common query patterns
-	_, err = db.Exec(`CREATE INDEX IF NOT EXISTS file_path_idx ON file2 (path_id)`)
+	_, err = db.Exec(`CREATE INDEX IF NOT EXISTS file_path_idx ON file (path_id)`)
 	if err != nil {
 		return err
 	}
-	_, err = db.Exec(`CREATE INDEX IF NOT EXISTS file_mtime_idx ON file2 (mtime)`)
+	_, err = db.Exec(`CREATE INDEX IF NOT EXISTS file_mtime_idx ON file (mtime)`)
 	if err != nil {
 		return err
 	}
@@ -498,7 +498,7 @@ func (d *DataProviderSqlite) SetSourceInfo(computerName string, basePath string,
 			FROM path p
 			INNER JOIN subtree s ON p.parent_id = s.id
 		)
-		DELETE FROM file2 WHERE path_id IN (SELECT id FROM subtree)
+		DELETE FROM file WHERE path_id IN (SELECT id FROM subtree)
 	`, parentId)
 	if err != nil {
 		return err
