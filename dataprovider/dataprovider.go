@@ -3,7 +3,6 @@ package dataprovider
 type UidT uint64
 
 type ProgressFunc func(current int64, total int64)
-
 type FileInfo struct {
 	Path       string
 	Size       uint64
@@ -11,6 +10,16 @@ type FileInfo struct {
 	Mtime      int64
 	Atime      int64
 	AtimeValid bool
+}
+
+type SearchResult struct {
+	Kind      string
+	Path      string
+	Size      uint64
+	Mtime     int64
+	Atime     int64
+	FileCount int64
+	TotalSize uint64
 }
 
 type TimeBin struct {
@@ -28,6 +37,7 @@ type DataProvider interface {
 	DirSizeTimeBins(dir string) ([]uint64, []uint64, []TimeBin, error)
 	SubDirs(dir string) ([]string, error)
 	SubDirSize(dir string) (uint64, error)
+	SearchByName(name string, limit int) ([]SearchResult, error)
 	Finalize()
 	StartTransaction() error
 	CommitTransaction() error
