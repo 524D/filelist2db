@@ -21,15 +21,16 @@ const (
 
 // DataProviderSqlite implements the DataProvider interface
 type DataProviderSqlite struct {
-	db                  *sql.DB
-	computerName        string
-	basePath            string
-	acqTime             int64
-	prevDirElemsIds     []int64 // Path elements IDs of previous file
-	prevDir             string  // Directory of previous file
-	prevPathId          int64   // Path ID of previous file
-	ancestorDirIDsCache []int64 // Ancestor dir IDs for the last path we resolved
-	prevAncestorDirs    []int64 // Ancestor dir IDs for the previous file
+	db                    *sql.DB
+	computerName          string
+	basePath              string
+	acqTime               int64
+	prevDirElemsIds       []int64       // Path elements IDs of previous file
+	prevDir               string        // Directory of previous file
+	prevPathId            int64         // Path ID of previous file
+	ancestorDirIDsCache   []int64       // Ancestor dir IDs for the last path we resolved
+	ancestorDirIDCachePos map[int64]int // Map of path IDs to their position in the cache
+	prevAncestorDirs      []int64       // Ancestor dir IDs for the previous file
 	// Prepared statements
 	stmtSelectPathElem             *sql.Stmt
 	stmtInsertPathElem             *sql.Stmt
@@ -463,6 +464,7 @@ func (d *DataProviderSqlite) SetSourceInfo(computerName string, basePath string,
 	d.basePath = basePath
 	d.acqTime = acqTime
 	d.ancestorDirIDsCache = nil
+	d.ancestorDirIDCachePos = make(map[int64]int)
 	if _, err := d.stmtInsertInputFile.Exec(d.acqTime); err != nil {
 		return err
 	}
@@ -761,17 +763,19 @@ func dirTimeBucket(t int64, acqTime int64) int {
 }
 
 func (d *DataProviderSqlite) ancestorDirIDs(pathID int64) ([]int64, error) {
-	// Check if the path is in the cache
-	if len(d.ancestorDirIDsCache) > 0 {
-		// If the first element in the cache is the same as the pathID, we can return the cache
-		if d.ancestorDirIDsCache[0] == pathID {
-			return d.ancestorDirIDsCache, nil
-		}
-	}
-
-	ids := make([]int64, 0, 8)
-	for current := pathID; current > 0; {
+	// Note: in this function, the ancestorDirIDsCache and ids are reverse ordered
+	// with the current directory first and the root directory last.
+	// On return, the slice is reversed to have the root directory first and the current directory last.
+	ids := make([]int64, 0, 20)
+	for current := pathID; current > 0; { // Current<=0 means we reached the root, which has no parent
 		var parentID, nodeType int64
+		// Check if we have the current pathID in the cache
+		if pos, ok := d.ancestorDirIDCachePos[current]; ok {
+			// If we have it, we can append the cached ancestor IDs to the result and break
+			ids = append(ids, d.ancestorDirIDsCache[pos:]...)
+			break
+		}
+
 		err := d.stmtSelectPathParentInfo.QueryRow(current).Scan(&parentID, &nodeType)
 		if err != nil {
 			return nil, err
@@ -784,11 +788,17 @@ func (d *DataProviderSqlite) ancestorDirIDs(pathID int64) ([]int64, error) {
 		}
 		current = parentID
 	}
-	// Reverse the slice to have the root directory first
-	slices.Reverse(ids)
-	// Cache the result
+	// Clear the cache and rebuild it with the new ancestor IDs
+	d.ancestorDirIDCachePos = make(map[int64]int)
+	for i, id := range ids {
+		d.ancestorDirIDCachePos[id] = i
+	}
 	d.ancestorDirIDsCache = ids
-	return ids, nil
+	// Reverse the slice to have the root directory first
+	tmp := make([]int64, len(ids))
+	copy(tmp, ids)
+	slices.Reverse(tmp)
+	return tmp, nil
 }
 
 func (d *DataProviderSqlite) flushDirSummaryBatch(stats map[int64]*dirSummary) error {
@@ -796,7 +806,13 @@ func (d *DataProviderSqlite) flushDirSummaryBatch(stats map[int64]*dirSummary) e
 		return nil
 	}
 
-	stmt, err := d.db.Prepare(`
+	tx, err := d.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	stmt, err := tx.Prepare(`
 		INSERT INTO dir (
 			path_id, file_count, total_size, acqtime_min, acqtime_max,
 			mtime_size_1m, mtime_size_3m, mtime_size_1y, mtime_size_3y, mtime_size_5y, mtime_size_older,
@@ -849,7 +865,8 @@ func (d *DataProviderSqlite) flushDirSummaryBatch(stats map[int64]*dirSummary) e
 			return err
 		}
 	}
-	return nil
+
+	return tx.Commit()
 }
 
 func (d *DataProviderSqlite) RebuildDirTable(batchSize int, progress dataprovider.ProgressFunc) error {
