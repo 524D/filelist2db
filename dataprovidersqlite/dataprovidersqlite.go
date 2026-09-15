@@ -1146,10 +1146,10 @@ func (d *DataProviderSqlite) resolvePathByID(pathID int64) (string, error) {
 	return strings.Join(parts, "/"), nil
 }
 
-func (d *DataProviderSqlite) SearchByName(name string, limit int) ([]dataprovider.SearchResult, []map[string]interface{}, error) {
+func (d *DataProviderSqlite) SearchByName(name string, limit int) ([]dataprovider.SearchResult, map[string]interface{}, error) {
 	start := time.Now()
-	meta := func() []map[string]interface{} {
-		return []map[string]interface{}{{"SearchTimeMicroSeconds": time.Since(start).Microseconds()}}
+	meta := func() map[string]interface{} {
+		return map[string]interface{}{"SearchTimeMicroSeconds": time.Since(start).Microseconds()}
 	}
 
 	term := strings.TrimSpace(name)
@@ -1220,10 +1220,10 @@ func (d *DataProviderSqlite) SearchByName(name string, limit int) ([]dataprovide
 	return results, meta(), nil
 }
 
-func (d *DataProviderSqlite) SearchBySimpleName(name string, limit int) ([]dataprovider.SearchResult, []map[string]interface{}, error) {
+func (d *DataProviderSqlite) SearchBySimpleName(name string, limit int) ([]dataprovider.SearchResult, map[string]interface{}, error) {
 	start := time.Now()
-	meta := func() []map[string]interface{} {
-		return []map[string]interface{}{{"SearchTimeMicroSeconds": time.Since(start).Microseconds()}}
+	meta := func() map[string]interface{} {
+		return map[string]interface{}{"SearchTimeMicroSeconds": time.Since(start).Microseconds()}
 	}
 
 	term := strings.TrimSpace(name)

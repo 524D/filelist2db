@@ -37,8 +37,8 @@ type DataProvider interface {
 	DirSizeTimeBins(dir string) ([]uint64, []uint64, []TimeBin, error)
 	SubDirs(dir string) ([]string, error)
 	SubDirSize(dir string) (uint64, error)
-	SearchByName(name string, limit int) ([]SearchResult, []map[string]interface{}, error)
-	SearchBySimpleName(name string, limit int) ([]SearchResult, []map[string]interface{}, error)
+	SearchByName(name string, limit int) ([]SearchResult, map[string]interface{}, error)
+	SearchBySimpleName(name string, limit int) ([]SearchResult, map[string]interface{}, error)
 	Finalize()
 	StartTransaction() error
 	CommitTransaction() error

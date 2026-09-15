@@ -250,7 +250,7 @@ func TestSearchBySimpleNameFindsOriginalPathElements(t *testing.T) {
 	if len(results) == 0 {
 		t.Fatalf("SearchBySimpleName should find the original file path for simplified name %q", "myreport")
 	}
-	if len(meta) == 0 || meta[0]["SearchTimeMicroSeconds"] == nil {
+	if len(meta) == 0 || meta["SearchTimeMicroSeconds"] == nil {
 		t.Fatalf("SearchBySimpleName metadata missing SearchTimeMicroSeconds")
 	}
 	if got := results[0].Path; got != "computername/E:/folder/sub/My-Report.txt" {
