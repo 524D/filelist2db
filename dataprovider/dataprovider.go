@@ -27,6 +27,20 @@ type TimeBin struct {
 	Txt     string // Textual description of time bin
 }
 
+type SearchSelection struct {
+	Kind         int64
+	Path         string
+	SimplePath   bool
+	SizeMin      int64
+	SizeMax      int64
+	MtimeMin     int64
+	MtimeMax     int64
+	AtimeMin     int64
+	AtimeMax     int64
+	ResultsFirst int64
+	ResultsLimit int64
+}
+
 type DataProvider interface {
 	SetSourceInfo(computerName string, basePath string, acqTime int64) error
 	SourceInfo() (string, string, int64)
@@ -37,6 +51,7 @@ type DataProvider interface {
 	DirSizeTimeBins(dir string) ([]uint64, []uint64, []TimeBin, error)
 	SubDirs(dir string) ([]string, error)
 	SubDirSize(dir string) (uint64, error)
+	Search(selection SearchSelection) ([]SearchResult, map[string]interface{}, error)
 	SearchByName(name string, limit int) ([]SearchResult, map[string]interface{}, error)
 	SearchBySimpleName(name string, limit int) ([]SearchResult, map[string]interface{}, error)
 	Finalize()
