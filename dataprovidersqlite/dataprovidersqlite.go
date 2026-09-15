@@ -293,7 +293,7 @@ func createTables(db *sql.DB) error {
 	if err != nil {
 		return err
 	}
-	_, err = db.Exec(`CREATE UNIQUE INDEX IF NOT EXISTS simple_path_elem_unique_idx ON simple_path_elem (simple_elem)`)
+	_, err = db.Exec(`CREATE UNIQUE INDEX IF NOT EXISTS simple_path_elem_unique_idx ON simple_path_elem (simple_elem COLLATE NOCASE)`)
 	if err != nil {
 		return err
 	}
