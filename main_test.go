@@ -123,7 +123,7 @@ func TestSetSourceInfoRemovesPreviousSourceData(t *testing.T) {
 	defer db.Close()
 
 	var fileCount int
-	if err := db.QueryRow(`SELECT COUNT(*) FROM file2`).Scan(&fileCount); err != nil {
+	if err := db.QueryRow(`SELECT COUNT(*) FROM file`).Scan(&fileCount); err != nil {
 		t.Fatalf("COUNT(*) query returned error: %v", err)
 	}
 	if fileCount != 0 {
@@ -172,6 +172,60 @@ func TestAddFileStoresPathFragments(t *testing.T) {
 		t.Fatalf("AddFile second import returned error: %v", err)
 	}
 
+}
+
+func TestAddFilePopulatesSimplePathTables(t *testing.T) {
+	dbFile := filepath.Join(t.TempDir(), "db.sqlite")
+	d, err := dataprovidersqlite.InitDataProviderSqlite(dbFile)
+	if err != nil {
+		t.Fatalf("InitDataProviderSqlite returned error: %v", err)
+	}
+	defer d.Finalize()
+
+	if err := d.SetSourceInfo("computername", "E:", 1000); err != nil {
+		t.Fatalf("SetSourceInfo returned error: %v", err)
+	}
+	if err := d.AddFile(dataprovider.FileInfo{Path: "folder/sub/My-Report.txt", Size: 42, Mtime: 100, Atime: 200, Uid: 7}); err != nil {
+		t.Fatalf("AddFile returned error: %v", err)
+	}
+
+	db, err := sql.Open("sqlite", dbFile)
+	if err != nil {
+		t.Fatalf("sql.Open returned error: %v", err)
+	}
+	defer db.Close()
+
+	var simpleCount int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM simple_path_elem`).Scan(&simpleCount); err != nil {
+		t.Fatalf("simple_path_elem count query returned error: %v", err)
+	}
+	if simpleCount == 0 {
+		t.Fatalf("simple_path_elem should contain simplified path elements")
+	}
+
+	var translateCount int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM simple_path_translate`).Scan(&translateCount); err != nil {
+		t.Fatalf("simple_path_translate count query returned error: %v", err)
+	}
+	if translateCount == 0 {
+		t.Fatalf("simple_path_translate should link simplified elements to path elements")
+	}
+
+	var simpleElem string
+	if err := db.QueryRow(`SELECT simple_elem FROM simple_path_elem WHERE simple_elem = 'myreport'`).Scan(&simpleElem); err != nil {
+		t.Fatalf("expected simplified file name mapping missing: %v", err)
+	}
+	if simpleElem != "myreport" {
+		t.Fatalf("simplified element mismatch: got %q want %q", simpleElem, "myreport")
+	}
+
+	var paired int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM simple_path_translate WHERE simple_path_elem_id = (SELECT id FROM simple_path_elem WHERE simple_elem = 'myreport')`).Scan(&paired); err != nil {
+		t.Fatalf("translate lookup query returned error: %v", err)
+	}
+	if paired == 0 {
+		t.Fatalf("myreport should map to at least one path_elem row")
+	}
 }
 
 func TestAddFileStoresServerShareRootAsSinglePathElement(t *testing.T) {

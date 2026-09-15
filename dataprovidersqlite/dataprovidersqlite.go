@@ -369,6 +369,39 @@ func simplifyPathElem(elem string) string {
 	return elem
 }
 
+func (d *DataProviderSqlite) addSimplePathTranslate(pathElemID int64, pathElem string) error {
+	simpleName := simplifyPathElem(pathElem)
+	if simpleName == "" {
+		return nil
+	}
+
+	var simpleID int64
+	err := d.db.QueryRow(`SELECT id FROM simple_path_elem WHERE simple_elem = ?`, simpleName).Scan(&simpleID)
+	if err == sql.ErrNoRows {
+		res, err := d.db.Exec(`INSERT INTO simple_path_elem (simple_elem) VALUES (?)`, simpleName)
+		if err != nil {
+			return err
+		}
+		simpleID, err = res.LastInsertId()
+		if err != nil {
+			return err
+		}
+	} else if err != nil {
+		return err
+	}
+
+	var count int64
+	if err := d.db.QueryRow(`SELECT COUNT(*) FROM simple_path_translate WHERE simple_path_elem_id = ? AND path_elem_id = ?`, simpleID, pathElemID).Scan(&count); err != nil {
+		return err
+	}
+	if count == 0 {
+		if _, err := d.db.Exec(`INSERT INTO simple_path_translate (simple_path_elem_id, path_elem_id) VALUES (?, ?)`, simpleID, pathElemID); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 // Get the numerical ids for the file path elements in elems
 func (d *DataProviderSqlite) getElemsIds(elems []string) ([]int64, error) {
 	elemsIds := make([]int64, 0, len(elems))
@@ -456,6 +489,10 @@ func (d *DataProviderSqlite) SetSourceInfo(computerName string, basePath string,
 	d.acqTime = acqTime
 	d.ancestorDirIDsCache = nil
 	d.ancestorDirIDCachePos = make(map[int64]int)
+	d.prevDirElemsIds = nil
+	d.prevDir = ""
+	d.prevPathId = 0
+	d.prevAncestorDirs = nil
 	if _, err := d.stmtInsertInputFile.Exec(d.acqTime); err != nil {
 		return err
 	}
@@ -689,6 +726,9 @@ func (d *DataProviderSqlite) addPathElems(elems []string) ([]int64, error) {
 			if err != nil {
 				return nil, err
 			}
+		}
+		if err := d.addSimplePathTranslate(id, e); err != nil {
+			return nil, err
 		}
 		elemsIds = append(elemsIds, id)
 	}
