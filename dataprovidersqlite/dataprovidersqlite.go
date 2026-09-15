@@ -287,25 +287,16 @@ func createTables(db *sql.DB) error {
 
 	_, err = db.Exec(`CREATE TABLE IF NOT EXISTS simple_path_elem (
 		id INTEGER PRIMARY KEY,
-		elem TEXT UNIQUE
+		simple_elem TEXT UNIQUE
 	)`)
 	if err != nil {
 		return err
 	}
 
-	_, err = db.Exec(`CREATE TABLE IF NOT EXISTS simple_path_dir (
+	_, err = db.Exec(`CREATE TABLE IF NOT EXISTS simple_path_translate (
 		id INTEGER PRIMARY KEY,
 		simple_path_elem_id INTEGER,
-		dir_id INTEGER
-	)`)
-	if err != nil {
-		return err
-	}
-
-	_, err = db.Exec(`CREATE TABLE IF NOT EXISTS simple_path_file (
-		id INTEGER PRIMARY KEY,
-		simple_path_elem_id INTEGER,
-		file_id INTEGER
+		path_elem_id INTEGER
 	)`)
 	if err != nil {
 		return err
