@@ -1224,6 +1224,7 @@ func (d *DataProviderSqlite) SearchBySimpleName(name string, limit int) ([]datap
 	if simpleTerm == "" {
 		return nil, nil
 	}
+	prefixTerm := simpleTerm + "%"
 
 	rows, err := d.db.Query(`
         SELECT kind, path_id, size, mtime, atime, file_count, total_size
@@ -1234,7 +1235,7 @@ func (d *DataProviderSqlite) SearchBySimpleName(name string, limit int) ([]datap
             JOIN path_elem AS pe ON pe.id = p.path_elem_id
             JOIN simple_path_translate AS spt ON spt.path_elem_id = pe.id
             JOIN simple_path_elem AS spe ON spe.id = spt.simple_path_elem_id
-            WHERE spe.simple_elem = ?
+            WHERE spe.simple_elem LIKE ?
             UNION ALL
             SELECT 'directory' AS kind, d.path_id AS path_id, d.total_size AS size, 0 AS mtime, 0 AS atime, d.file_count AS file_count, d.total_size AS total_size
             FROM dir AS d
@@ -1242,10 +1243,10 @@ func (d *DataProviderSqlite) SearchBySimpleName(name string, limit int) ([]datap
             JOIN path_elem AS pe ON pe.id = p.path_elem_id
             JOIN simple_path_translate AS spt ON spt.path_elem_id = pe.id
             JOIN simple_path_elem AS spe ON spe.id = spt.simple_path_elem_id
-            WHERE spe.simple_elem = ?
+            WHERE spe.simple_elem LIKE ?
         )
         ORDER BY path_id
-        LIMIT ?`, simpleTerm, simpleTerm, limit)
+        LIMIT ?`, prefixTerm, prefixTerm, limit)
 	if err != nil {
 		return nil, err
 	}
