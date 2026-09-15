@@ -6,6 +6,7 @@ import (
 	"regexp"
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/524D/filelist2db/dataprovider"
 	_ "modernc.org/sqlite"
@@ -1145,10 +1146,15 @@ func (d *DataProviderSqlite) resolvePathByID(pathID int64) (string, error) {
 	return strings.Join(parts, "/"), nil
 }
 
-func (d *DataProviderSqlite) SearchByName(name string, limit int) ([]dataprovider.SearchResult, error) {
+func (d *DataProviderSqlite) SearchByName(name string, limit int) ([]dataprovider.SearchResult, []map[string]interface{}, error) {
+	start := time.Now()
+	meta := func() []map[string]interface{} {
+		return []map[string]interface{}{{"SearchTimeMicroSeconds": time.Since(start).Microseconds()}}
+	}
+
 	term := strings.TrimSpace(name)
 	if len(term) < 4 {
-		return nil, nil
+		return nil, meta(), nil
 	}
 	if limit <= 0 || limit > 20 {
 		limit = 20
@@ -1174,7 +1180,7 @@ func (d *DataProviderSqlite) SearchByName(name string, limit int) ([]dataprovide
         ORDER BY path_id
         LIMIT ?`, query, query, limit)
 	if err != nil {
-		return nil, err
+		return nil, meta(), err
 	}
 	defer rows.Close()
 
@@ -1189,12 +1195,12 @@ func (d *DataProviderSqlite) SearchByName(name string, limit int) ([]dataprovide
 		var totalSize int64
 
 		if err := rows.Scan(&kind, &pathID, &size, &mtime, &atime, &fileCount, &totalSize); err != nil {
-			return nil, err
+			return nil, meta(), err
 		}
 
 		path, err := d.resolvePathByID(pathID)
 		if err != nil {
-			return nil, err
+			return nil, meta(), err
 		}
 
 		results = append(results, dataprovider.SearchResult{
@@ -1208,13 +1214,21 @@ func (d *DataProviderSqlite) SearchByName(name string, limit int) ([]dataprovide
 		})
 	}
 
-	return results, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, meta(), err
+	}
+	return results, meta(), nil
 }
 
-func (d *DataProviderSqlite) SearchBySimpleName(name string, limit int) ([]dataprovider.SearchResult, error) {
+func (d *DataProviderSqlite) SearchBySimpleName(name string, limit int) ([]dataprovider.SearchResult, []map[string]interface{}, error) {
+	start := time.Now()
+	meta := func() []map[string]interface{} {
+		return []map[string]interface{}{{"SearchTimeMicroSeconds": time.Since(start).Microseconds()}}
+	}
+
 	term := strings.TrimSpace(name)
 	if len(term) == 0 {
-		return nil, nil
+		return nil, meta(), nil
 	}
 	if limit <= 0 || limit > 20 {
 		limit = 20
@@ -1222,7 +1236,7 @@ func (d *DataProviderSqlite) SearchBySimpleName(name string, limit int) ([]datap
 
 	simpleTerm := simplifyPathElem(term)
 	if simpleTerm == "" {
-		return nil, nil
+		return nil, meta(), nil
 	}
 	prefixTerm := simpleTerm + "%"
 
@@ -1248,7 +1262,7 @@ func (d *DataProviderSqlite) SearchBySimpleName(name string, limit int) ([]datap
         ORDER BY path_id
         LIMIT ?`, prefixTerm, prefixTerm, limit)
 	if err != nil {
-		return nil, err
+		return nil, meta(), err
 	}
 	defer rows.Close()
 
@@ -1263,12 +1277,12 @@ func (d *DataProviderSqlite) SearchBySimpleName(name string, limit int) ([]datap
 		var totalSize int64
 
 		if err := rows.Scan(&kind, &pathID, &size, &mtime, &atime, &fileCount, &totalSize); err != nil {
-			return nil, err
+			return nil, meta(), err
 		}
 
 		path, err := d.resolvePathByID(pathID)
 		if err != nil {
-			return nil, err
+			return nil, meta(), err
 		}
 
 		results = append(results, dataprovider.SearchResult{
@@ -1282,5 +1296,8 @@ func (d *DataProviderSqlite) SearchBySimpleName(name string, limit int) ([]datap
 		})
 	}
 
-	return results, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, meta(), err
+	}
+	return results, meta(), nil
 }
