@@ -733,21 +733,6 @@ func (d *DataProviderSqlite) SubDirSize(dir string) (uint64, error) {
 	return uint64(totalSize), nil
 }
 
-func splitPath(fn string) []string {
-	// split path in elements
-	elems := make([]string, 0, 10)
-	d := fn
-	for ; d != "/" && d != "."; d = path.Dir(d) {
-		elems = append(elems, path.Base(d))
-	}
-	// Reverse slice
-	// FIXME: use slices.Reverse(s) when Go 1.21 is released
-	for i, j := 0, len(elems)-1; i < j; i, j = i+1, j-1 {
-		elems[i], elems[j] = elems[j], elems[i]
-	}
-	return elems
-}
-
 func (d *DataProviderSqlite) addPathElems(elems []string) ([]int64, error) {
 	// Add path elements to path_elem table
 	// Return slice with ids of path elements
@@ -779,7 +764,7 @@ func (d *DataProviderSqlite) addPathElems(elems []string) ([]int64, error) {
 	return elemsIds, nil
 }
 
-func (d *DataProviderSqlite) addFileDb2(f dataprovider.FileInfo, pathId int64) (int64, error) {
+func (d *DataProviderSqlite) addFileDb(f dataprovider.FileInfo, pathId int64) (int64, error) {
 	// Add file to file table
 	// Return id of file
 	var id int64
@@ -1093,7 +1078,7 @@ func (d *DataProviderSqlite) AddFile(f dataprovider.FileInfo) error {
 	}
 
 	// Add file info to file table
-	_, err = d.addFileDb2(f, pathId)
+	_, err = d.addFileDb(f, pathId)
 
 	// We assume that files are added sorted by path
 	// To avoid having to update the dir table for every file, we only update it
