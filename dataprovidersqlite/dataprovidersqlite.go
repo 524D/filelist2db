@@ -292,12 +292,20 @@ func createTables(db *sql.DB) error {
 	if err != nil {
 		return err
 	}
+	_, err = db.Exec(`CREATE UNIQUE INDEX IF NOT EXISTS simple_path_elem_unique_idx ON simple_path_elem (simple_elem)`)
+	if err != nil {
+		return err
+	}
 
 	_, err = db.Exec(`CREATE TABLE IF NOT EXISTS simple_path_translate (
 		id INTEGER PRIMARY KEY,
 		simple_path_elem_id INTEGER,
 		path_elem_id INTEGER
 	)`)
+	if err != nil {
+		return err
+	}
+	_, err = db.Exec(`CREATE UNIQUE INDEX IF NOT EXISTS simple_path_translate_unique_idx ON simple_path_translate (simple_path_elem_id, path_elem_id)`)
 	if err != nil {
 		return err
 	}
@@ -1165,6 +1173,79 @@ func (d *DataProviderSqlite) SearchByName(name string, limit int) ([]dataprovide
         )
         ORDER BY path_id
         LIMIT ?`, query, query, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	results := make([]dataprovider.SearchResult, 0, limit)
+	for rows.Next() {
+		var kind string
+		var pathID int64
+		var size int64
+		var mtime int64
+		var atime int64
+		var fileCount int64
+		var totalSize int64
+
+		if err := rows.Scan(&kind, &pathID, &size, &mtime, &atime, &fileCount, &totalSize); err != nil {
+			return nil, err
+		}
+
+		path, err := d.resolvePathByID(pathID)
+		if err != nil {
+			return nil, err
+		}
+
+		results = append(results, dataprovider.SearchResult{
+			Kind:      kind,
+			Path:      path,
+			Size:      uint64(size),
+			Mtime:     mtime,
+			Atime:     atime,
+			FileCount: fileCount,
+			TotalSize: uint64(totalSize),
+		})
+	}
+
+	return results, rows.Err()
+}
+
+func (d *DataProviderSqlite) SearchBySimpleName(name string, limit int) ([]dataprovider.SearchResult, error) {
+	term := strings.TrimSpace(name)
+	if len(term) == 0 {
+		return nil, nil
+	}
+	if limit <= 0 || limit > 20 {
+		limit = 20
+	}
+
+	simpleTerm := simplifyPathElem(term)
+	if simpleTerm == "" {
+		return nil, nil
+	}
+
+	rows, err := d.db.Query(`
+        SELECT kind, path_id, size, mtime, atime, file_count, total_size
+        FROM (
+            SELECT 'file' AS kind, f.path_id AS path_id, f.size AS size, f.mtime AS mtime, f.atime AS atime, 0 AS file_count, 0 AS total_size
+            FROM file AS f
+            JOIN path AS p ON p.id = f.path_id
+            JOIN path_elem AS pe ON pe.id = p.path_elem_id
+            JOIN simple_path_translate AS spt ON spt.path_elem_id = pe.id
+            JOIN simple_path_elem AS spe ON spe.id = spt.simple_path_elem_id
+            WHERE spe.simple_elem = ?
+            UNION ALL
+            SELECT 'directory' AS kind, d.path_id AS path_id, d.total_size AS size, 0 AS mtime, 0 AS atime, d.file_count AS file_count, d.total_size AS total_size
+            FROM dir AS d
+            JOIN path AS p ON p.id = d.path_id
+            JOIN path_elem AS pe ON pe.id = p.path_elem_id
+            JOIN simple_path_translate AS spt ON spt.path_elem_id = pe.id
+            JOIN simple_path_elem AS spe ON spe.id = spt.simple_path_elem_id
+            WHERE spe.simple_elem = ?
+        )
+        ORDER BY path_id
+        LIMIT ?`, simpleTerm, simpleTerm, limit)
 	if err != nil {
 		return nil, err
 	}

@@ -38,6 +38,7 @@ type DataProvider interface {
 	SubDirs(dir string) ([]string, error)
 	SubDirSize(dir string) (uint64, error)
 	SearchByName(name string, limit int) ([]SearchResult, error)
+	SearchBySimpleName(name string, limit int) ([]SearchResult, error)
 	Finalize()
 	StartTransaction() error
 	CommitTransaction() error

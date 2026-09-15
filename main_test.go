@@ -228,6 +228,56 @@ func TestAddFilePopulatesSimplePathTables(t *testing.T) {
 	}
 }
 
+func TestSearchBySimpleNameFindsOriginalPathElements(t *testing.T) {
+	dbFile := filepath.Join(t.TempDir(), "db.sqlite")
+	d, err := dataprovidersqlite.InitDataProviderSqlite(dbFile)
+	if err != nil {
+		t.Fatalf("InitDataProviderSqlite returned error: %v", err)
+	}
+	defer d.Finalize()
+
+	if err := d.SetSourceInfo("computername", "E:", 1000); err != nil {
+		t.Fatalf("SetSourceInfo returned error: %v", err)
+	}
+	if err := d.AddFile(dataprovider.FileInfo{Path: "folder/sub/My-Report.txt", Size: 42, Mtime: 100, Atime: 200, Uid: 7}); err != nil {
+		t.Fatalf("AddFile returned error: %v", err)
+	}
+
+	results, err := d.SearchBySimpleName("myreport", 10)
+	if err != nil {
+		t.Fatalf("SearchBySimpleName returned error: %v", err)
+	}
+	if len(results) == 0 {
+		t.Fatalf("SearchBySimpleName should find the original file path for simplified name %q", "myreport")
+	}
+	if got := results[0].Path; got != "computername/E:/folder/sub/My-Report.txt" {
+		t.Fatalf("SearchBySimpleName path mismatch: got %q want %q", got, "computername/E:/folder/sub/My-Report.txt")
+	}
+}
+
+func TestSimplePathTranslationIndexExists(t *testing.T) {
+	dbFile := filepath.Join(t.TempDir(), "db.sqlite")
+	d, err := dataprovidersqlite.InitDataProviderSqlite(dbFile)
+	if err != nil {
+		t.Fatalf("InitDataProviderSqlite returned error: %v", err)
+	}
+	defer d.Finalize()
+
+	db, err := sql.Open("sqlite", dbFile)
+	if err != nil {
+		t.Fatalf("sql.Open returned error: %v", err)
+	}
+	defer db.Close()
+
+	var count int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM sqlite_master WHERE type = 'index' AND name = 'simple_path_translate_unique_idx'`).Scan(&count); err != nil {
+		t.Fatalf("sqlite_master query returned error: %v", err)
+	}
+	if count != 1 {
+		t.Fatalf("expected simple_path_translate_unique_idx to exist, got %d matches", count)
+	}
+}
+
 func TestAddFileStoresServerShareRootAsSinglePathElement(t *testing.T) {
 	dbFile := filepath.Join(t.TempDir(), "db.sqlite")
 	d, err := dataprovidersqlite.InitDataProviderSqlite(dbFile)
