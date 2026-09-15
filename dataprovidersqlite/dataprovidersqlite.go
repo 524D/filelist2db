@@ -39,6 +39,10 @@ type DataProviderSqlite struct {
 	stmtInsertPath                 *sql.Stmt
 	stmtInsertFile                 *sql.Stmt
 	stmtInsertInputFile            *sql.Stmt
+	stmtSelectSimplePathElem       *sql.Stmt
+	stmtInsertSimplePathElem       *sql.Stmt
+	stmtCountSimplePathTranslate   *sql.Stmt
+	stmtInsertSimplePathTranslate  *sql.Stmt
 	stmtSelectPathByElemParent     *sql.Stmt
 	stmtSelectPathByElemParentType *sql.Stmt
 	stmtSelectPathParentInfo       *sql.Stmt
@@ -96,6 +100,22 @@ func InitDataProviderSqlite(dbFile string) (dataprovider.DataProvider, error) {
 		return nil, err
 	}
 	d.stmtInsertInputFile, err = db.Prepare(`INSERT INTO input_file (timestamp) VALUES (?)`)
+	if err != nil {
+		return nil, err
+	}
+	d.stmtSelectSimplePathElem, err = db.Prepare(`SELECT id FROM simple_path_elem WHERE simple_elem = ?`)
+	if err != nil {
+		return nil, err
+	}
+	d.stmtInsertSimplePathElem, err = db.Prepare(`INSERT INTO simple_path_elem (simple_elem) VALUES (?)`)
+	if err != nil {
+		return nil, err
+	}
+	d.stmtCountSimplePathTranslate, err = db.Prepare(`SELECT COUNT(*) FROM simple_path_translate WHERE simple_path_elem_id = ? AND path_elem_id = ?`)
+	if err != nil {
+		return nil, err
+	}
+	d.stmtInsertSimplePathTranslate, err = db.Prepare(`INSERT INTO simple_path_translate (simple_path_elem_id, path_elem_id) VALUES (?, ?)`)
 	if err != nil {
 		return nil, err
 	}
@@ -175,6 +195,18 @@ func (d *DataProviderSqlite) Finalize() {
 	}
 	if d.stmtInsertInputFile != nil {
 		d.stmtInsertInputFile.Close()
+	}
+	if d.stmtSelectSimplePathElem != nil {
+		d.stmtSelectSimplePathElem.Close()
+	}
+	if d.stmtInsertSimplePathElem != nil {
+		d.stmtInsertSimplePathElem.Close()
+	}
+	if d.stmtCountSimplePathTranslate != nil {
+		d.stmtCountSimplePathTranslate.Close()
+	}
+	if d.stmtInsertSimplePathTranslate != nil {
+		d.stmtInsertSimplePathTranslate.Close()
 	}
 	if d.stmtSelectPathByElemParent != nil {
 		d.stmtSelectPathByElemParent.Close()
@@ -385,9 +417,9 @@ func (d *DataProviderSqlite) addSimplePathTranslate(pathElemID int64, pathElem s
 	}
 
 	var simpleID int64
-	err := d.db.QueryRow(`SELECT id FROM simple_path_elem WHERE simple_elem = ?`, simpleName).Scan(&simpleID)
+	err := d.stmtSelectSimplePathElem.QueryRow(simpleName).Scan(&simpleID)
 	if err == sql.ErrNoRows {
-		res, err := d.db.Exec(`INSERT INTO simple_path_elem (simple_elem) VALUES (?)`, simpleName)
+		res, err := d.stmtInsertSimplePathElem.Exec(simpleName)
 		if err != nil {
 			return err
 		}
@@ -400,11 +432,11 @@ func (d *DataProviderSqlite) addSimplePathTranslate(pathElemID int64, pathElem s
 	}
 
 	var count int64
-	if err := d.db.QueryRow(`SELECT COUNT(*) FROM simple_path_translate WHERE simple_path_elem_id = ? AND path_elem_id = ?`, simpleID, pathElemID).Scan(&count); err != nil {
+	if err := d.stmtCountSimplePathTranslate.QueryRow(simpleID, pathElemID).Scan(&count); err != nil {
 		return err
 	}
 	if count == 0 {
-		if _, err := d.db.Exec(`INSERT INTO simple_path_translate (simple_path_elem_id, path_elem_id) VALUES (?, ?)`, simpleID, pathElemID); err != nil {
+		if _, err := d.stmtInsertSimplePathTranslate.Exec(simpleID, pathElemID); err != nil {
 			return err
 		}
 	}
@@ -735,9 +767,11 @@ func (d *DataProviderSqlite) addPathElems(elems []string) ([]int64, error) {
 			if err != nil {
 				return nil, err
 			}
-		}
-		if err := d.addSimplePathTranslate(id, e); err != nil {
-			return nil, err
+			// We only need to add/check the simple path translation if we added a new path element.
+			// If the path element already existed, the simple version should already exist.
+			if err := d.addSimplePathTranslate(id, e); err != nil {
+				return nil, err
+			}
 		}
 		elemsIds = append(elemsIds, id)
 	}
