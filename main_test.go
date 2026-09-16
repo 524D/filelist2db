@@ -276,7 +276,7 @@ func TestSearchSimplePathOnly(t *testing.T) {
 		t.Fatalf("AddFile returned error: %v", err)
 	}
 
-	results, meta, err := d.Search(dataprovider.SearchSelection{Path: "myreport", SimplePath: true, ResultsLimit: 10})
+	results, meta, err := d.Search(dataprovider.SearchSelection{Path: "myreport", SimplePath: true, ResultsLimit: 10, Kind: -1, SizeMin: -1, SizeMax: -1, MtimeMin: -1, MtimeMax: -1, AtimeMin: -1, AtimeMax: -1})
 	if err != nil {
 		t.Fatalf("Search returned error: %v", err)
 	}
@@ -312,7 +312,7 @@ func TestSearchSizeRangeOnly(t *testing.T) {
 		t.Fatalf("AddFile returned error: %v", err)
 	}
 
-	results, _, err := d.Search(dataprovider.SearchSelection{SizeMin: 15, SizeMax: 25, ResultsLimit: 10})
+	results, _, err := d.Search(dataprovider.SearchSelection{SizeMin: 15, SizeMax: 25, ResultsLimit: 10, Kind: -1, MtimeMin: -1, MtimeMax: -1, AtimeMin: -1, AtimeMax: -1})
 	if err != nil {
 		t.Fatalf("Search returned error: %v", err)
 	}
