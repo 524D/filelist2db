@@ -637,8 +637,43 @@ func (d *DataProviderSqlite) resolvePathID(dir string) (int64, error) {
 	return parentID, nil
 }
 
-func (d *DataProviderSqlite) DirExists(dir string) (bool, error) {
-	_, err := d.resolvePathID(dir)
+// Resolve the path ID for a directory under a given source root
+func (d *DataProviderSqlite) resolvePathIDInSource(source string, dir string) (int64, error) {
+	var sourceElemID int64
+
+	if err := d.stmtSelectPathElem.QueryRow(source).Scan(&sourceElemID); err != nil {
+		return 0, err
+	}
+
+	elems := []string{source}
+	trimmed := strings.TrimSpace(dir)
+	if trimmed == "" || trimmed == "." {
+		return sourceElemID, nil
+	}
+	trimmed = strings.TrimLeft(trimmed, "/")
+	for _, part := range strings.Split(trimmed, "/") {
+		if part != "" && part != "." {
+			elems = append(elems, part)
+		}
+	}
+	parentID := sourceElemID
+	for _, elem := range elems {
+		var pathElemID int64
+		if err := d.stmtSelectPathElem.QueryRow(elem).Scan(&pathElemID); err != nil {
+			return 0, err
+		}
+		var id int64
+		if err := d.stmtSelectPathByElemParentType.QueryRow(pathElemID, parentID).Scan(&id); err != nil {
+			return 0, err
+		}
+		parentID = id
+	}
+	// Parent ID now contains the path ID for the desired directory under the source root
+	return parentID, nil
+}
+
+func (d *DataProviderSqlite) DirExists(source string, dir string) (bool, error) {
+	_, err := d.resolvePathIDInSource(source, dir)
 	if err == nil {
 		return true, nil
 	}
@@ -657,8 +692,8 @@ var timeBins = []dataprovider.TimeBin{
 	{MaxAgeS: (3600 * 24 * 365 * 999), Txt: "> 5 years"},
 }
 
-func (d *DataProviderSqlite) DirSizeTimeBins(dir string) ([]uint64, []uint64, []dataprovider.TimeBin, error) {
-	pathID, err := d.resolvePathID(dir)
+func (d *DataProviderSqlite) DirSizeTimeBins(source string, dir string) ([]uint64, []uint64, []dataprovider.TimeBin, error) {
+	pathID, err := d.resolvePathIDInSource(source, dir)
 	if err != nil {
 		return nil, nil, timeBins, err
 	}
@@ -675,8 +710,8 @@ func (d *DataProviderSqlite) DirSizeTimeBins(dir string) ([]uint64, []uint64, []
 	return mSizes, aSizes, timeBins, nil
 }
 
-func (d *DataProviderSqlite) SubDirs(dir string) ([]string, error) {
-	pathID, err := d.resolvePathID(dir)
+func (d *DataProviderSqlite) SubDirs(source string, dir string) ([]string, error) {
+	pathID, err := d.resolvePathIDInSource(source, dir)
 	if err != nil {
 		return nil, err
 	}
@@ -696,8 +731,8 @@ func (d *DataProviderSqlite) SubDirs(dir string) ([]string, error) {
 	return out, rows.Err()
 }
 
-func (d *DataProviderSqlite) SubDirSize(dir string) (uint64, error) {
-	pathID, err := d.resolvePathID(dir)
+func (d *DataProviderSqlite) SubDirSize(source string, dir string) (uint64, error) {
+	pathID, err := d.resolvePathIDInSource(source, dir)
 	if err != nil {
 		return 0, err
 	}

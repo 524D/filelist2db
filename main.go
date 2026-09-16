@@ -28,11 +28,6 @@ type Args struct {
 
 var args Args
 
-type timeBin struct {
-	maxAgeS uint64 // Maximum age in seconds
-	txt     string // Textual description of time bin
-}
-
 var (
 	fileListLineRE = regexp.MustCompile(`^([0-9]*)\t([0-9]*)\t([0-9]*)\t([0-9]*)\t([0-9]*)(?:\.[0-9]*)\t([0-9]*)(?:\.[0-9]*)\t([0-9]*)(?:\.[0-9]*)\t(.*)$`)
 	findFilenameRE = regexp.MustCompile(`^(?:.*[/\\])?(?:_([^/\\]*?)_)?([^/\\]*?)_([0-9]{8}-[0-9]{6})\.(?:lst|txt)$`)

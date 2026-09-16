@@ -47,10 +47,10 @@ type DataProvider interface {
 	DataSources() ([]string, error)
 	AddFile(FileInfo) error
 	RebuildDirTable(batchSize int, progress ProgressFunc) error
-	DirExists(dir string) (bool, error)
-	DirSizeTimeBins(dir string) ([]uint64, []uint64, []TimeBin, error)
-	SubDirs(dir string) ([]string, error)
-	SubDirSize(dir string) (uint64, error)
+	DirExists(source string, dir string) (bool, error)
+	DirSizeTimeBins(source string, dir string) ([]uint64, []uint64, []TimeBin, error)
+	SubDirs(source string, dir string) ([]string, error)
+	SubDirSize(source string, dir string) (uint64, error)
 	Search(selection SearchSelection) ([]SearchResult, map[string]interface{}, error)
 	SearchByName(name string, limit int) ([]SearchResult, map[string]interface{}, error)
 	SearchBySimpleName(name string, limit int) ([]SearchResult, map[string]interface{}, error)
