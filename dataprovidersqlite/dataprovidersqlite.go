@@ -33,28 +33,27 @@ type DataProviderSqlite struct {
 	ancestorDirIDCachePos map[int64]int // Map of path IDs to their position in the cache
 	prevAncestorDirs      []int64       // Ancestor dir IDs for the previous file
 	// Prepared statements
-	stmtSelectPathElem             *sql.Stmt
-	stmtInsertPathElem             *sql.Stmt
-	stmtSelectPath                 *sql.Stmt
-	stmtInsertPath                 *sql.Stmt
-	stmtInsertFile                 *sql.Stmt
-	stmtInsertInputFile            *sql.Stmt
-	stmtSelectSimplePathElem       *sql.Stmt
-	stmtInsertSimplePathElem       *sql.Stmt
-	stmtCountSimplePathTranslate   *sql.Stmt
-	stmtInsertSimplePathTranslate  *sql.Stmt
-	stmtSelectPathByElemParent     *sql.Stmt
-	stmtSelectPathByElemParentType *sql.Stmt
-	stmtSelectPathParentInfo       *sql.Stmt
-	stmtSelectRootSources          *sql.Stmt
-	stmtSelectDirSummary           *sql.Stmt
-	stmtSelectSubDirs              *sql.Stmt
-	stmtSelectDirTotalSize         *sql.Stmt
-	stmtCountFiles                 *sql.Stmt
-	stmtDeleteDir                  *sql.Stmt
-	stmtSelectFileBatch            *sql.Stmt
-	stmtBeginTransaction           *sql.Stmt
-	stmtCommitTransaction          *sql.Stmt
+	stmtSelectPathElem                    *sql.Stmt
+	stmtInsertPathElem                    *sql.Stmt
+	stmtSelectPath                        *sql.Stmt
+	stmtInsertPath                        *sql.Stmt
+	stmtInsertFile                        *sql.Stmt
+	stmtInsertInputFile                   *sql.Stmt
+	stmtSelectSimplePathElem              *sql.Stmt
+	stmtInsertSimplePathElem              *sql.Stmt
+	stmtCountSimplePathTranslate          *sql.Stmt
+	stmtInsertSimplePathTranslate         *sql.Stmt
+	stmtSelectPathIDByElemAndParentPathID *sql.Stmt
+	stmtSelectPathParentInfo              *sql.Stmt
+	stmtSelectRootSources                 *sql.Stmt
+	stmtSelectDirSummary                  *sql.Stmt
+	stmtSelectSubDirs                     *sql.Stmt
+	stmtSelectDirTotalSize                *sql.Stmt
+	stmtCountFiles                        *sql.Stmt
+	stmtDeleteDir                         *sql.Stmt
+	stmtSelectFileBatch                   *sql.Stmt
+	stmtBeginTransaction                  *sql.Stmt
+	stmtCommitTransaction                 *sql.Stmt
 }
 
 func InitDataProviderSqlite(dbFile string) (dataprovider.DataProvider, error) {
@@ -119,11 +118,7 @@ func InitDataProviderSqlite(dbFile string) (dataprovider.DataProvider, error) {
 	if err != nil {
 		return nil, err
 	}
-	d.stmtSelectPathByElemParent, err = db.Prepare(`SELECT id FROM path WHERE path_elem_id = ? AND parent_id = ?`)
-	if err != nil {
-		return nil, err
-	}
-	d.stmtSelectPathByElemParentType, err = db.Prepare(`SELECT id FROM path WHERE path_elem_id = ? AND parent_id = ? AND node_type != 0`)
+	d.stmtSelectPathIDByElemAndParentPathID, err = db.Prepare(`SELECT id FROM path WHERE path_elem_id = ? AND parent_id = ?`)
 	if err != nil {
 		return nil, err
 	}
@@ -208,11 +203,8 @@ func (d *DataProviderSqlite) Finalize() {
 	if d.stmtInsertSimplePathTranslate != nil {
 		d.stmtInsertSimplePathTranslate.Close()
 	}
-	if d.stmtSelectPathByElemParent != nil {
-		d.stmtSelectPathByElemParent.Close()
-	}
-	if d.stmtSelectPathByElemParentType != nil {
-		d.stmtSelectPathByElemParentType.Close()
+	if d.stmtSelectPathIDByElemAndParentPathID != nil {
+		d.stmtSelectPathIDByElemAndParentPathID.Close()
 	}
 	if d.stmtSelectPathParentInfo != nil {
 		d.stmtSelectPathParentInfo.Close()
@@ -531,7 +523,7 @@ func (d *DataProviderSqlite) SetSourceInfo(dataSource string, basePath string, a
 	parentId := int64(-1)
 	for _, peId := range elemsIds {
 		var id int64
-		err := d.stmtSelectPathByElemParent.QueryRow(peId, parentId).Scan(&id)
+		err := d.stmtSelectPathIDByElemAndParentPathID.QueryRow(peId, parentId).Scan(&id)
 		if err != nil {
 			// not found, nothing to delete
 			return nil
@@ -629,7 +621,7 @@ func (d *DataProviderSqlite) resolvePathID(dir string) (int64, error) {
 			return 0, err
 		}
 		var id int64
-		if err := d.stmtSelectPathByElemParentType.QueryRow(pathElemID, parentID).Scan(&id); err != nil {
+		if err := d.stmtSelectPathIDByElemAndParentPathID.QueryRow(pathElemID, parentID).Scan(&id); err != nil {
 			return 0, err
 		}
 		parentID = id
@@ -640,15 +632,18 @@ func (d *DataProviderSqlite) resolvePathID(dir string) (int64, error) {
 // Resolve the path ID for a directory under a given source root
 func (d *DataProviderSqlite) resolvePathIDInSource(source string, dir string) (int64, error) {
 	var sourceElemID int64
+	var sourcePathID int64
 
 	if err := d.stmtSelectPathElem.QueryRow(source).Scan(&sourceElemID); err != nil {
 		return 0, err
 	}
-
+	if err := d.stmtSelectPathIDByElemAndParentPathID.QueryRow(sourceElemID, -1).Scan(&sourcePathID); err != nil {
+		return 0, err
+	}
 	elems := []string{source}
 	trimmed := strings.TrimSpace(dir)
 	if trimmed == "" || trimmed == "." {
-		return sourceElemID, nil
+		return sourcePathID, nil
 	}
 	trimmed = strings.TrimLeft(trimmed, "/")
 	for _, part := range strings.Split(trimmed, "/") {
@@ -656,14 +651,14 @@ func (d *DataProviderSqlite) resolvePathIDInSource(source string, dir string) (i
 			elems = append(elems, part)
 		}
 	}
-	parentID := sourceElemID
+	parentID := sourcePathID
 	for _, elem := range elems {
 		var pathElemID int64
 		if err := d.stmtSelectPathElem.QueryRow(elem).Scan(&pathElemID); err != nil {
 			return 0, err
 		}
 		var id int64
-		if err := d.stmtSelectPathByElemParentType.QueryRow(pathElemID, parentID).Scan(&id); err != nil {
+		if err := d.stmtSelectPathIDByElemAndParentPathID.QueryRow(pathElemID, parentID).Scan(&id); err != nil {
 			return 0, err
 		}
 		parentID = id
