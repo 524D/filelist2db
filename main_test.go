@@ -258,6 +258,72 @@ func TestSearchBySimpleNameFindsOriginalPathElements(t *testing.T) {
 	}
 }
 
+func TestSearchSimplePathOnly(t *testing.T) {
+	dbFile := filepath.Join(t.TempDir(), "db.sqlite")
+	d, err := dataprovidersqlite.InitDataProviderSqlite(dbFile)
+	if err != nil {
+		t.Fatalf("InitDataProviderSqlite returned error: %v", err)
+	}
+	defer d.Finalize()
+
+	if err := d.SetSourceInfo("computername", "E:", 1000); err != nil {
+		t.Fatalf("SetSourceInfo returned error: %v", err)
+	}
+	if err := d.AddFile(dataprovider.FileInfo{Path: "folder/sub/My-Report.txt", Size: 42, Mtime: 100, Atime: 200, Uid: 7}); err != nil {
+		t.Fatalf("AddFile returned error: %v", err)
+	}
+	if err := d.AddFile(dataprovider.FileInfo{Path: "folder/sub/Other-Report.txt", Size: 99, Mtime: 100, Atime: 200, Uid: 7}); err != nil {
+		t.Fatalf("AddFile returned error: %v", err)
+	}
+
+	results, meta, err := d.Search(dataprovider.SearchSelection{Path: "myreport", SimplePath: true, ResultsLimit: 10})
+	if err != nil {
+		t.Fatalf("Search returned error: %v", err)
+	}
+	if len(results) == 0 {
+		t.Fatalf("Search should find simplified path match for %q", "myreport")
+	}
+	if got := results[0].Path; got != "computername/E:/folder/sub/My-Report.txt" {
+		t.Fatalf("Search path mismatch: got %q want %q", got, "computername/E:/folder/sub/My-Report.txt")
+	}
+	if _, ok := meta["SearchTimeMicroSeconds"]; !ok {
+		t.Fatalf("Search metadata missing SearchTimeMicroSeconds")
+	}
+}
+
+func TestSearchSizeRangeOnly(t *testing.T) {
+	dbFile := filepath.Join(t.TempDir(), "db.sqlite")
+	d, err := dataprovidersqlite.InitDataProviderSqlite(dbFile)
+	if err != nil {
+		t.Fatalf("InitDataProviderSqlite returned error: %v", err)
+	}
+	defer d.Finalize()
+
+	if err := d.SetSourceInfo("computername", "E:", 1000); err != nil {
+		t.Fatalf("SetSourceInfo returned error: %v", err)
+	}
+	if err := d.AddFile(dataprovider.FileInfo{Path: "folder/a.txt", Size: 10, Mtime: 100, Atime: 200, Uid: 7}); err != nil {
+		t.Fatalf("AddFile returned error: %v", err)
+	}
+	if err := d.AddFile(dataprovider.FileInfo{Path: "folder/b.txt", Size: 20, Mtime: 100, Atime: 200, Uid: 7}); err != nil {
+		t.Fatalf("AddFile returned error: %v", err)
+	}
+	if err := d.AddFile(dataprovider.FileInfo{Path: "folder/c.txt", Size: 30, Mtime: 100, Atime: 200, Uid: 7}); err != nil {
+		t.Fatalf("AddFile returned error: %v", err)
+	}
+
+	results, _, err := d.Search(dataprovider.SearchSelection{SizeMin: 15, SizeMax: 25, ResultsLimit: 10})
+	if err != nil {
+		t.Fatalf("Search returned error: %v", err)
+	}
+	if len(results) != 1 {
+		t.Fatalf("Search size-range should return exactly one result, got %d", len(results))
+	}
+	if got := results[0].Path; got != "computername/E:/folder/b.txt" {
+		t.Fatalf("Search path mismatch: got %q want %q", got, "computername/E:/folder/b.txt")
+	}
+}
+
 func TestSimplePathTranslationIndexExists(t *testing.T) {
 	dbFile := filepath.Join(t.TempDir(), "db.sqlite")
 	d, err := dataprovidersqlite.InitDataProviderSqlite(dbFile)
