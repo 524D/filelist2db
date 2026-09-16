@@ -631,15 +631,8 @@ func (d *DataProviderSqlite) resolvePathID(dir string) (int64, error) {
 
 // Resolve the path ID for a directory under a given source root
 func (d *DataProviderSqlite) resolvePathIDInSource(source string, dir string) (int64, error) {
-	var sourceElemID int64
 	var sourcePathID int64
 
-	if err := d.stmtSelectPathElem.QueryRow(source).Scan(&sourceElemID); err != nil {
-		return 0, err
-	}
-	if err := d.stmtSelectPathIDByElemAndParentPathID.QueryRow(sourceElemID, -1).Scan(&sourcePathID); err != nil {
-		return 0, err
-	}
 	elems := []string{source}
 	trimmed := strings.TrimSpace(dir)
 	if trimmed == "" || trimmed == "." {
@@ -651,7 +644,7 @@ func (d *DataProviderSqlite) resolvePathIDInSource(source string, dir string) (i
 			elems = append(elems, part)
 		}
 	}
-	parentID := sourcePathID
+	parentID := int64(-1)
 	for _, elem := range elems {
 		var pathElemID int64
 		if err := d.stmtSelectPathElem.QueryRow(elem).Scan(&pathElemID); err != nil {
