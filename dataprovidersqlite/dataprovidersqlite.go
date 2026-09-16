@@ -1079,47 +1079,7 @@ func (d *DataProviderSqlite) AddFile(f dataprovider.FileInfo) error {
 
 	// Add file info to file table
 	_, err = d.addFileDb(f, pathId)
-
-	// We assume that files are added sorted by path
-	// To avoid having to update the dir table for every file, we only update it
-	// when the a new path element is encountered
-
-	// Store the path elements IDs if we don't have them yet
-	// if d.prevDirElemsIds == nil {
-	// 	d.prevDirElemsIds = elemsIds[:len(elemsIds)-1]
-	// } else {
-	// 	// Skip over common prefix of previous and current path elements
-	// 	i := 0
-	// 	for ; i < len(d.prevDirElemsIds) && i < len(elemsIds) && d.prevDirElemsIds[i] == elemsIds[i]; i++ {
-	// 	}
-	// 	// If file is in a new directory, write dir table for paths of higher dir levels
-	// }
-
-	// FIXME: write dir info after the very last file
-
-	// accTimeBin := binTime(f.atime, d.acqTime)
-	// modTimeBin := binTime(f.mtime, d.acqTime)
-	// lastDir := ``
-	// for dir := path.Dir(f.path); lastDir != `.` && lastDir != `/`; dir = path.Dir(dir) {
-	// 	var ds dirSummary
-	// 	var ok bool
-	// 	// Create dir summary item if this is the first time we encountered this dir
-	// 	if ds, ok = d.dirSummap[dir]; !ok {
-	// 		ds.dirs = make(map[string]void)
-	// 		ds.uids = make(map[uidT]void)
-	// 	}
-
-	// 	if lastDir != `` {
-	// 		ds.dirs[lastDir] = member
-	// 	}
-	// 	ds.sizeAccTm[accTimeBin] += f.size
-	// 	ds.sizeModTm[modTimeBin] += f.size
-	// 	ds.uids[uidT(f.uid)] = member
-	// 	d.dirSummap[dir] = ds
-	// 	lastDir = path.Base(dir)
-	// }
-
-	return nil
+	return err
 }
 
 func (d *DataProviderSqlite) StartTransaction() error {
