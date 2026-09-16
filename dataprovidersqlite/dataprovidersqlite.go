@@ -23,7 +23,7 @@ const (
 // DataProviderSqlite implements the DataProvider interface
 type DataProviderSqlite struct {
 	db                    *sql.DB
-	computerName          string
+	dataSource            string
 	basePath              string
 	acqTime               int64
 	prevDirElemsIds       []int64       // Path elements IDs of previous file
@@ -460,34 +460,14 @@ func (d *DataProviderSqlite) getElemsIds(elems []string) ([]int64, error) {
 
 func (d *DataProviderSqlite) sourceRootElems() []string {
 	elems := make([]string, 0, 8)
-	if d.computerName != "" {
-		elems = append(elems, d.computerName)
+	if d.dataSource != "" {
+		elems = append(elems, d.dataSource)
 	}
 	if d.basePath == "" {
 		return elems
 	}
 
-	base := strings.ReplaceAll(d.basePath, `\\`, "/")
-	base = strings.ReplaceAll(base, `\`, "/")
-	base = strings.TrimSpace(base)
-	base = strings.TrimLeft(base, "/")
-	base = strings.TrimSuffix(base, "/")
-	if base == "" {
-		return elems
-	}
-
-	if strings.HasPrefix(d.basePath, `\\`) || strings.HasPrefix(d.basePath, `//`) {
-		parts := strings.Split(base, "/")
-		if len(parts) >= 2 {
-			elems = append(elems, parts[0]+"/"+parts[1])
-			for _, part := range parts[2:] {
-				if part != "" && part != "." {
-					elems = append(elems, part)
-				}
-			}
-			return elems
-		}
-	}
+	base := d.basePath
 
 	if len(base) >= 2 && base[1] == ':' {
 		elems = append(elems, base[:2])
@@ -513,8 +493,6 @@ func (d *DataProviderSqlite) pathElems(dir string) []string {
 	if trimmed == "" || trimmed == "." {
 		return elems
 	}
-	trimmed = strings.ReplaceAll(trimmed, `\\`, "/")
-	trimmed = strings.ReplaceAll(trimmed, `\`, "/")
 	trimmed = strings.TrimLeft(trimmed, "/")
 	for _, part := range strings.Split(trimmed, "/") {
 		if part != "" && part != "." {
@@ -524,8 +502,8 @@ func (d *DataProviderSqlite) pathElems(dir string) []string {
 	return elems
 }
 
-func (d *DataProviderSqlite) SetSourceInfo(computerName string, basePath string, acqTime int64) error {
-	d.computerName = computerName
+func (d *DataProviderSqlite) SetSourceInfo(dataSource string, basePath string, acqTime int64) error {
+	d.dataSource = dataSource
 	d.basePath = basePath
 	d.acqTime = acqTime
 	d.ancestorDirIDsCache = nil
@@ -614,7 +592,7 @@ func (d *DataProviderSqlite) SetSourceInfo(computerName string, basePath string,
 }
 
 func (d *DataProviderSqlite) SourceInfo() (string, string, int64) {
-	return d.computerName, d.basePath, d.acqTime
+	return d.dataSource, d.basePath, d.acqTime
 }
 
 func (d *DataProviderSqlite) DataSources() ([]string, error) {

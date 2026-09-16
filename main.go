@@ -11,6 +11,7 @@ import (
 	"regexp"
 	"runtime/pprof"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/524D/filelist2db/dataprovider"
@@ -30,15 +31,6 @@ var args Args
 type timeBin struct {
 	maxAgeS uint64 // Maximum age in seconds
 	txt     string // Textual description of time bin
-}
-
-var timeBins = [...]timeBin{
-	{(3600 * 24 * 30), "< 1 month"},
-	{(3600 * 24 * 90), "1 to 3 months"},
-	{(3600 * 24 * 365), "3 to 12 months "},
-	{(3600 * 24 * 365 * 3), "1 to 3 years"},
-	{(3600 * 24 * 365 * 5), "3-5 years"},
-	{(3600 * 24 * 30) * 999, "> 5 years"},
 }
 
 var (
@@ -99,10 +91,11 @@ func parseCmdLine() []string {
 
 // Decode computer name, base path and search timestamp from filename of "find" result
 // The filename should be named like:
-// [_computername_]<escaped_base_path>_<timestamp>.<txt|lst>
+// [_computername_][network_share]<_escaped_base_path>_<timestamp>.<txt|lst>
 // Where:
-//   - computername is the name of the computer whose files are indexed. Can
-//     be absent if the filepath refers to a network share
+//   - computername is the name of the computer whose files are indexed.
+//   - if the computername is absent, the network share is used as the computer name.
+//     It is an error if both computername and network share are absent.
 //   - escaped_base_path is the path under which the file info is obtained
 //   - timestamp is the timestamp of the scan, in the format YYYYMMDD-HHMMSS
 //
@@ -112,6 +105,11 @@ func parseCmdLine() []string {
 // Other invalid filename characters are replaced by "%" followed by their ASCII/UTF8
 // hex character code, e.g. "%2F" for slash ("/") and "%5C" for backslash ("\").
 // "%" is replaced by %25
+// The return value is the datasource (the computer name, or if computername is absent and the
+// path starts with a network share prefix, the share name), the unescaped base path, and the timestamp as a Unix timestamp (seconds since epoch).
+// All path names are normalized to use forward slashes ("/") as path separators, and the base path is stripped of leading and trailing slashes.
+//
+//	the base path, and the timestamp as a Unix timestamp (seconds since epoch).
 func decodeFindFilename(fn string) (string, string, int64, error) {
 	match := findFilenameRE.FindStringSubmatch(fn)
 	if len(match) < 4 {
@@ -121,31 +119,40 @@ func decodeFindFilename(fn string) (string, string, int64, error) {
 	if err != nil {
 		return ``, ``, 0, errors.New("can't decode basepath from filename")
 	}
+	basePath = strings.ReplaceAll(basePath, `\`, "/")
+	dataSource := match[1]
+	if dataSource == `` {
+		// If computer name is not provided, use the network share as the computer name
+		if len(basePath) > 2 && (basePath[0:2] == `\\` || basePath[0:2] == `//`) {
+			slashIndex := 2
+			// Find the second slash after the network share prefix, or the end of the string if there is no second slash.
+			//  The network share is the leading part of the path.
+			for range 2 {
+				for slashIndex < len(basePath) && basePath[slashIndex] != '/' && basePath[slashIndex] != '\\' {
+					slashIndex++
+				}
+				if slashIndex < len(basePath) {
+					slashIndex++ // Move to the character after the slash
+				}
+			}
+			dataSource = basePath[:slashIndex]
+			if slashIndex < len(basePath) {
+				basePath = basePath[slashIndex+1:]
+			} else {
+				basePath = ``
+			}
+		}
+	}
+	// Strip leading and trailing slashes from basePath
+	basePath = strings.TrimLeft(basePath, "/")
+	basePath = strings.TrimRight(basePath, "/")
 	ts, err := time.Parse(`20060102-150405`, match[3])
 	if err != nil {
 		return ``, ``, 0, errors.New("can't decode timestamp from filename")
 	}
 	t := ts.Unix()
 
-	return match[1], basePath, t, nil
-}
-
-func binTime(t int64, acqTime int64) int {
-	age := acqTime - t
-	for i, tb := range timeBins {
-		if age < int64(tb.maxAgeS) {
-			return i
-		}
-	}
-	return len(timeBins) - 1
-}
-
-func sumSz(sz [len(timeBins)]uint64) uint64 {
-	sum := uint64(0)
-	for i := 0; i < len(timeBins); i++ {
-		sum += sz[i]
-	}
-	return sum
+	return dataSource, basePath, t, nil
 }
 
 func parseFileInfoLine(line string) (dataprovider.FileInfo, bool) {
@@ -226,11 +233,11 @@ func parseFileList(d dataprovider.DataProvider, reader io.ReadSeeker, progress d
 }
 
 func processListFile(d dataprovider.DataProvider, fn string) error {
-	computerName, basePath, acqTime, err := decodeFindFilename(fn)
+	dataSource, basePath, acqTime, err := decodeFindFilename(fn)
 	if err != nil {
 		return err
 	}
-	d.SetSourceInfo(computerName, basePath, acqTime)
+	d.SetSourceInfo(dataSource, basePath, acqTime)
 	f, err := os.Open(fn)
 	if err != nil {
 		return err

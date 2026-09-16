@@ -42,7 +42,7 @@ type SearchSelection struct {
 }
 
 type DataProvider interface {
-	SetSourceInfo(computerName string, basePath string, acqTime int64) error
+	SetSourceInfo(dataSource string, basePath string, acqTime int64) error
 	SourceInfo() (string, string, int64)
 	DataSources() ([]string, error)
 	AddFile(FileInfo) error
