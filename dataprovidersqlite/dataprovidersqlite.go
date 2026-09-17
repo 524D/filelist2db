@@ -2,11 +2,11 @@ package dataprovidersqlite
 
 import (
 	"database/sql"
+	"path/filepath"
 	"strings"
 	"time"
 
 	"github.com/524D/filelist2db/dataprovider"
-	"github.com/524D/filelist2db/dbcommon"
 	_ "modernc.org/sqlite"
 )
 
@@ -41,7 +41,7 @@ type DataProviderSqlite struct {
 }
 
 func InitDataProviderSqlite(dbFile string) (dataprovider.DataProvider, error) {
-	db, err := dbcommon.OpenReadOnlyDatabase(dbFile)
+	db, err := openReadOnlyDatabase(dbFile)
 	if err != nil {
 		return nil, err
 	}
@@ -88,19 +88,52 @@ func InitDataProviderSqlite(dbFile string) (dataprovider.DataProvider, error) {
 	return &d, nil
 }
 
+func openReadOnlyDatabase(dbFile string) (*sql.DB, error) {
+	dsn := "file:" + filepath.ToSlash(dbFile) + "?_mode=ro"
+	db, err := sql.Open("sqlite", dsn)
+	if err != nil {
+		return nil, err
+	}
+	return db, nil
+}
+
 func (d *DataProviderSqlite) Finalize() {
-	if d.stmtSelectPathElem != nil { d.stmtSelectPathElem.Close() }
-	if d.stmtSelectPath != nil { d.stmtSelectPath.Close() }
-	if d.stmtSelectPathIDByElemAndParentPathID != nil { d.stmtSelectPathIDByElemAndParentPathID.Close() }
-	if d.stmtSelectPathParentInfo != nil { d.stmtSelectPathParentInfo.Close() }
-	if d.stmtSelectRootSources != nil { d.stmtSelectRootSources.Close() }
-	if d.stmtSelectDirSummary != nil { d.stmtSelectDirSummary.Close() }
-	if d.stmtSelectSubDirs != nil { d.stmtSelectSubDirs.Close() }
-	if d.stmtSelectDirTotalSize != nil { d.stmtSelectDirTotalSize.Close() }
-	if d.stmtCountFiles != nil { d.stmtCountFiles.Close() }
-	if d.stmtDeleteDir != nil { d.stmtDeleteDir.Close() }
-	if d.stmtSelectFileBatch != nil { d.stmtSelectFileBatch.Close() }
-	if d.db != nil { d.db.Close() }
+	if d.stmtSelectPathElem != nil {
+		d.stmtSelectPathElem.Close()
+	}
+	if d.stmtSelectPath != nil {
+		d.stmtSelectPath.Close()
+	}
+	if d.stmtSelectPathIDByElemAndParentPathID != nil {
+		d.stmtSelectPathIDByElemAndParentPathID.Close()
+	}
+	if d.stmtSelectPathParentInfo != nil {
+		d.stmtSelectPathParentInfo.Close()
+	}
+	if d.stmtSelectRootSources != nil {
+		d.stmtSelectRootSources.Close()
+	}
+	if d.stmtSelectDirSummary != nil {
+		d.stmtSelectDirSummary.Close()
+	}
+	if d.stmtSelectSubDirs != nil {
+		d.stmtSelectSubDirs.Close()
+	}
+	if d.stmtSelectDirTotalSize != nil {
+		d.stmtSelectDirTotalSize.Close()
+	}
+	if d.stmtCountFiles != nil {
+		d.stmtCountFiles.Close()
+	}
+	if d.stmtDeleteDir != nil {
+		d.stmtDeleteDir.Close()
+	}
+	if d.stmtSelectFileBatch != nil {
+		d.stmtSelectFileBatch.Close()
+	}
+	if d.db != nil {
+		d.db.Close()
+	}
 }
 
 func simplifyPathElem(elem string) string {
@@ -336,7 +369,6 @@ func (d *DataProviderSqlite) SubDirSize(source string, dir string) (uint64, erro
 	}
 	return uint64(totalSize), nil
 }
-
 
 type SameFiles struct {
 	Files []dataprovider.FileInfo
