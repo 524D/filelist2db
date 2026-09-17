@@ -84,7 +84,7 @@ func InitDataFillerSqlite(dbFile string) (*DataFillerSqlite, error) {
 	if d.stmtInsertFile, err = db.Prepare(`INSERT INTO file (path_id, size, mtime, atime, uid) VALUES (?, ?, ?, ?, ?)`); err != nil {
 		return nil, err
 	}
-	if d.stmtInsertInputFile, err = db.Prepare(`INSERT INTO input_file (timestamp) VALUES (?)`); err != nil {
+	if d.stmtInsertInputFile, err = db.Prepare(`INSERT INTO input_file (path_id, timestamp) VALUES (?, ?)`); err != nil {
 		return nil, err
 	}
 	if d.stmtSelectSimplePathElem, err = db.Prepare(`SELECT id FROM simple_path_elem WHERE simple_elem = ?`); err != nil {
@@ -235,6 +235,7 @@ func createTables(db *sql.DB) error {
 
 	_, err = db.Exec(`CREATE TABLE IF NOT EXISTS input_file (
 		id INTEGER PRIMARY KEY,
+		path_id INTEGER,
 		timestamp INTEGER NOT NULL DEFAULT 0
 	)`)
 	if err != nil {
@@ -385,9 +386,7 @@ func (d *DataFillerSqlite) sourceRootElems() []string {
 	if base == "" {
 		return elems
 	}
-	if strings.HasPrefix(base, "/") {
-		base = strings.TrimPrefix(base, "/")
-	}
+	base = strings.TrimPrefix(base, "/")
 	if len(base) >= 2 && base[1] == ':' {
 		elems = append(elems, base[:2])
 		base = strings.TrimPrefix(base[2:], "/")
@@ -610,9 +609,6 @@ func (d *DataFillerSqlite) SetSourceInfo(dataSource string, basePath string, acq
 	d.prevDir = ""
 	d.prevPathId = 0
 	d.prevAncestorDirs = nil
-	if _, err := d.stmtInsertInputFile.Exec(d.acqTime); err != nil {
-		return err
-	}
 
 	elems := d.sourceRootElems()
 	if len(elems) == 0 {
@@ -650,7 +646,17 @@ func (d *DataFillerSqlite) SetSourceInfo(dataSource string, basePath string, acq
 	if err != nil {
 		return err
 	}
-	return tx.Commit()
+
+	err = tx.Commit()
+	if err != nil {
+		return err
+	}
+	// Store the acquisition time in the input_file table to keep track of when this data was added
+	if _, err := d.stmtInsertInputFile.Exec(parentId, d.acqTime); err != nil {
+		return err
+	}
+
+	return nil
 }
 
 func (d *DataFillerSqlite) AddFile(f dataprovider.FileInfo) error {
