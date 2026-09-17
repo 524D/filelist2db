@@ -1,4 +1,6 @@
-db.sqlite
+*.sqlite
+*.sqlite-journal
+cpuprofile*.prof
 /testdata
 
 *.exe
