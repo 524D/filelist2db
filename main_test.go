@@ -7,9 +7,58 @@ import (
 	"testing"
 	"time"
 
+	"github.com/524D/filelist2db/datafiller"
+	"github.com/524D/filelist2db/datafillersqlite"
 	"github.com/524D/filelist2db/dataprovider"
 	"github.com/524D/filelist2db/dataprovidersqlite"
 )
+
+func TestDataFillerInterfaceSplit(t *testing.T) {
+	var provider dataprovider.DataProvider
+	var filler datafiller.DataFiller
+	_ = provider
+	_ = filler
+
+	dbFile := filepath.Join(t.TempDir(), "db.sqlite")
+	f, err := datafillersqlite.InitDataFillerSqlite(dbFile)
+	if err != nil {
+		t.Fatalf("InitDataFillerSqlite returned error: %v", err)
+	}
+	defer f.Finalize()
+
+	if err := f.SetSourceInfo("computername", "E:", 1000); err != nil {
+		t.Fatalf("SetSourceInfo returned error: %v", err)
+	}
+
+	if err := f.AddFile(dataprovider.FileInfo{Path: "folder/file.txt", Size: 42, Mtime: 100, Atime: 200, Uid: 7}); err != nil {
+		t.Fatalf("AddFile returned error: %v", err)
+	}
+}
+
+func initFilledProvider(t *testing.T, dbFile, source, basePath string, acqTime int64, files ...dataprovider.FileInfo) dataprovider.DataProvider {
+	t.Helper()
+
+	f, err := datafillersqlite.InitDataFillerSqlite(dbFile)
+	if err != nil {
+		t.Fatalf("InitDataFillerSqlite returned error: %v", err)
+	}
+	defer f.Finalize()
+
+	if err := f.SetSourceInfo(source, basePath, acqTime); err != nil {
+		t.Fatalf("SetSourceInfo returned error: %v", err)
+	}
+	for _, file := range files {
+		if err := f.AddFile(file); err != nil {
+			t.Fatalf("AddFile returned error: %v", err)
+		}
+	}
+
+	p, err := dataprovidersqlite.InitDataProviderSqlite(dbFile)
+	if err != nil {
+		t.Fatalf("InitDataProviderSqlite returned error: %v", err)
+	}
+	return p
+}
 
 func TestDecodeFindFilename(t *testing.T) {
 	computer, basePath, ts, err := decodeFindFilename(`testdata/_computername_E%3A_20220301-134000.lst`)
@@ -28,34 +77,32 @@ func TestDecodeFindFilename(t *testing.T) {
 	}
 }
 
-func TestInitDataProviderSqlitePreparesCommonStatements(t *testing.T) {
+func TestInitDataProviderSqlitePreparesReadOnlyStatements(t *testing.T) {
 	dbFile := filepath.Join(t.TempDir(), "db.sqlite")
-	d, err := dataprovidersqlite.InitDataProviderSqlite(dbFile)
+	filler, err := datafillersqlite.InitDataFillerSqlite(dbFile)
+	if err != nil {
+		t.Fatalf("InitDataFillerSqlite returned error: %v", err)
+	}
+	filler.Finalize()
+
+	p, err := dataprovidersqlite.InitDataProviderSqlite(dbFile)
 	if err != nil {
 		t.Fatalf("InitDataProviderSqlite returned error: %v", err)
 	}
-	defer d.Finalize()
+	defer p.Finalize()
 
-	v := reflect.ValueOf(d).Elem()
+	v := reflect.ValueOf(p).Elem()
 	for _, name := range []string{
 		"stmtSelectPathElem",
-		"stmtInsertPathElem",
 		"stmtSelectPath",
-		"stmtInsertPath",
-		"stmtInsertFile",
-		"stmtInsertInputFile",
-		"stmtSelectPathByElemParent",
-		"stmtSelectPathByElemParentType",
+		"stmtSelectPathIDByElemAndParentPathID",
 		"stmtSelectPathParentInfo",
 		"stmtSelectRootSources",
 		"stmtSelectDirSummary",
 		"stmtSelectSubDirs",
 		"stmtSelectDirTotalSize",
 		"stmtCountFiles",
-		"stmtDeleteDir",
 		"stmtSelectFileBatch",
-		"stmtBeginTransaction",
-		"stmtCommitTransaction",
 	} {
 		field := v.FieldByName(name)
 		if !field.IsValid() {
@@ -69,15 +116,14 @@ func TestInitDataProviderSqlitePreparesCommonStatements(t *testing.T) {
 
 func TestSetSourceInfoRecordsAcquisitionTimestamp(t *testing.T) {
 	dbFile := filepath.Join(t.TempDir(), "db.sqlite")
-	d, err := dataprovidersqlite.InitDataProviderSqlite(dbFile)
+	filler, err := datafillersqlite.InitDataFillerSqlite(dbFile)
 	if err != nil {
-		t.Fatalf("InitDataProviderSqlite returned error: %v", err)
+		t.Fatalf("InitDataFillerSqlite returned error: %v", err)
 	}
-	defer d.Finalize()
-
-	if err := d.SetSourceInfo("computername", "E:", 1000); err != nil {
+	if err := filler.SetSourceInfo("computername", "E:", 1000); err != nil {
 		t.Fatalf("SetSourceInfo returned error: %v", err)
 	}
+	filler.Finalize()
 
 	db, err := sql.Open("sqlite", dbFile)
 	if err != nil {
@@ -99,22 +145,26 @@ func TestSetSourceInfoRecordsAcquisitionTimestamp(t *testing.T) {
 
 func TestSetSourceInfoRemovesPreviousSourceData(t *testing.T) {
 	dbFile := filepath.Join(t.TempDir(), "db.sqlite")
-	d, err := dataprovidersqlite.InitDataProviderSqlite(dbFile)
+	filler, err := datafillersqlite.InitDataFillerSqlite(dbFile)
 	if err != nil {
-		t.Fatalf("InitDataProviderSqlite returned error: %v", err)
+		t.Fatalf("InitDataFillerSqlite returned error: %v", err)
 	}
-	defer d.Finalize()
-
-	if err := d.SetSourceInfo("computername", "E:", 1000); err != nil {
+	if err := filler.SetSourceInfo("computername", "E:", 1000); err != nil {
 		t.Fatalf("SetSourceInfo initial call returned error: %v", err)
 	}
-	if err := d.AddFile(dataprovider.FileInfo{Path: "folder/old.txt", Size: 42, Mtime: 100, Atime: 200, Uid: 7}); err != nil {
+	if err := filler.AddFile(dataprovider.FileInfo{Path: "folder/old.txt", Size: 42, Mtime: 100, Atime: 200, Uid: 7}); err != nil {
 		t.Fatalf("AddFile old file returned error: %v", err)
 	}
+	filler.Finalize()
 
-	if err := d.SetSourceInfo("computername", "E:", 2000); err != nil {
+	filler, err = datafillersqlite.InitDataFillerSqlite(dbFile)
+	if err != nil {
+		t.Fatalf("InitDataFillerSqlite second call returned error: %v", err)
+	}
+	if err := filler.SetSourceInfo("computername", "E:", 2000); err != nil {
 		t.Fatalf("SetSourceInfo second call returned error: %v", err)
 	}
+	filler.Finalize()
 
 	db, err := sql.Open("sqlite", dbFile)
 	if err != nil {
@@ -153,41 +203,38 @@ func TestParseFileInfoLine(t *testing.T) {
 
 func TestAddFileStoresPathFragments(t *testing.T) {
 	dbFile := filepath.Join(t.TempDir(), "db.sqlite")
-	d, err := dataprovidersqlite.InitDataProviderSqlite(dbFile)
+	filler, err := datafillersqlite.InitDataFillerSqlite(dbFile)
 	if err != nil {
-		t.Fatalf("InitDataProviderSqlite returned error: %v", err)
+		t.Fatalf("InitDataFillerSqlite returned error: %v", err)
 	}
-	defer d.Finalize()
-
-	if err := d.SetSourceInfo("computername", "E:", 1000); err != nil {
+	if err := filler.SetSourceInfo("computername", "E:", 1000); err != nil {
 		t.Fatalf("SetSourceInfo returned error: %v", err)
 	}
-	if err := d.AddFile(dataprovider.FileInfo{Path: "folder/sub/My-Report.txt", Size: 42, Mtime: 100, Atime: 200, Uid: 7}); err != nil {
+	if err := filler.AddFile(dataprovider.FileInfo{Path: "folder/sub/My-Report.txt", Size: 42, Mtime: 100, Atime: 200, Uid: 7}); err != nil {
 		t.Fatalf("AddFile returned error: %v", err)
 	}
-	if err := d.SetSourceInfo("computername", "E:", 1001); err != nil {
+	if err := filler.SetSourceInfo("computername", "E:", 1001); err != nil {
 		t.Fatalf("SetSourceInfo repeat call returned error: %v", err)
 	}
-	if err := d.AddFile(dataprovider.FileInfo{Path: "folder/sub/My-Report.txt", Size: 42, Mtime: 100, Atime: 200, Uid: 7}); err != nil {
+	if err := filler.AddFile(dataprovider.FileInfo{Path: "folder/sub/My-Report.txt", Size: 42, Mtime: 100, Atime: 200, Uid: 7}); err != nil {
 		t.Fatalf("AddFile second import returned error: %v", err)
 	}
-
+	filler.Finalize()
 }
 
 func TestAddFilePopulatesSimplePathTables(t *testing.T) {
 	dbFile := filepath.Join(t.TempDir(), "db.sqlite")
-	d, err := dataprovidersqlite.InitDataProviderSqlite(dbFile)
+	filler, err := datafillersqlite.InitDataFillerSqlite(dbFile)
 	if err != nil {
-		t.Fatalf("InitDataProviderSqlite returned error: %v", err)
+		t.Fatalf("InitDataFillerSqlite returned error: %v", err)
 	}
-	defer d.Finalize()
-
-	if err := d.SetSourceInfo("computername", "E:", 1000); err != nil {
+	if err := filler.SetSourceInfo("computername", "E:", 1000); err != nil {
 		t.Fatalf("SetSourceInfo returned error: %v", err)
 	}
-	if err := d.AddFile(dataprovider.FileInfo{Path: "folder/sub/My-Report.txt", Size: 42, Mtime: 100, Atime: 200, Uid: 7}); err != nil {
+	if err := filler.AddFile(dataprovider.FileInfo{Path: "folder/sub/My-Report.txt", Size: 42, Mtime: 100, Atime: 200, Uid: 7}); err != nil {
 		t.Fatalf("AddFile returned error: %v", err)
 	}
+	filler.Finalize()
 
 	db, err := sql.Open("sqlite", dbFile)
 	if err != nil {
@@ -230,20 +277,12 @@ func TestAddFilePopulatesSimplePathTables(t *testing.T) {
 
 func TestSearchBySimpleNameFindsOriginalPathElements(t *testing.T) {
 	dbFile := filepath.Join(t.TempDir(), "db.sqlite")
-	d, err := dataprovidersqlite.InitDataProviderSqlite(dbFile)
-	if err != nil {
-		t.Fatalf("InitDataProviderSqlite returned error: %v", err)
-	}
-	defer d.Finalize()
+	p := initFilledProvider(t, dbFile, "computername", "E:", 1000,
+		dataprovider.FileInfo{Path: "folder/sub/My-Report.txt", Size: 42, Mtime: 100, Atime: 200, Uid: 7},
+	)
+	defer p.Finalize()
 
-	if err := d.SetSourceInfo("computername", "E:", 1000); err != nil {
-		t.Fatalf("SetSourceInfo returned error: %v", err)
-	}
-	if err := d.AddFile(dataprovider.FileInfo{Path: "folder/sub/My-Report.txt", Size: 42, Mtime: 100, Atime: 200, Uid: 7}); err != nil {
-		t.Fatalf("AddFile returned error: %v", err)
-	}
-
-	results, meta, err := d.SearchBySimpleName("myreport", 10)
+	results, meta, err := p.SearchBySimpleName("myreport", 10)
 	if err != nil {
 		t.Fatalf("SearchBySimpleName returned error: %v", err)
 	}
@@ -260,23 +299,13 @@ func TestSearchBySimpleNameFindsOriginalPathElements(t *testing.T) {
 
 func TestSearchSimplePathOnly(t *testing.T) {
 	dbFile := filepath.Join(t.TempDir(), "db.sqlite")
-	d, err := dataprovidersqlite.InitDataProviderSqlite(dbFile)
-	if err != nil {
-		t.Fatalf("InitDataProviderSqlite returned error: %v", err)
-	}
-	defer d.Finalize()
+	p := initFilledProvider(t, dbFile, "computername", "E:", 1000,
+		dataprovider.FileInfo{Path: "folder/sub/My-Report.txt", Size: 42, Mtime: 100, Atime: 200, Uid: 7},
+		dataprovider.FileInfo{Path: "folder/sub/Other-Report.txt", Size: 99, Mtime: 100, Atime: 200, Uid: 7},
+	)
+	defer p.Finalize()
 
-	if err := d.SetSourceInfo("computername", "E:", 1000); err != nil {
-		t.Fatalf("SetSourceInfo returned error: %v", err)
-	}
-	if err := d.AddFile(dataprovider.FileInfo{Path: "folder/sub/My-Report.txt", Size: 42, Mtime: 100, Atime: 200, Uid: 7}); err != nil {
-		t.Fatalf("AddFile returned error: %v", err)
-	}
-	if err := d.AddFile(dataprovider.FileInfo{Path: "folder/sub/Other-Report.txt", Size: 99, Mtime: 100, Atime: 200, Uid: 7}); err != nil {
-		t.Fatalf("AddFile returned error: %v", err)
-	}
-
-	results, meta, err := d.Search(dataprovider.SearchSelection{Path: "myreport", SimplePath: true, ResultsLimit: 10, Kind: -1, SizeMin: -1, SizeMax: -1, MtimeMin: -1, MtimeMax: -1, AtimeMin: -1, AtimeMax: -1})
+	results, meta, err := p.Search(dataprovider.SearchSelection{Path: "myreport", SimplePath: true, ResultsLimit: 10, Kind: -1, SizeMin: -1, SizeMax: -1, MtimeMin: -1, MtimeMax: -1, AtimeMin: -1, AtimeMax: -1})
 	if err != nil {
 		t.Fatalf("Search returned error: %v", err)
 	}
@@ -293,26 +322,14 @@ func TestSearchSimplePathOnly(t *testing.T) {
 
 func TestSearchSizeRangeOnly(t *testing.T) {
 	dbFile := filepath.Join(t.TempDir(), "db.sqlite")
-	d, err := dataprovidersqlite.InitDataProviderSqlite(dbFile)
-	if err != nil {
-		t.Fatalf("InitDataProviderSqlite returned error: %v", err)
-	}
-	defer d.Finalize()
+	p := initFilledProvider(t, dbFile, "computername", "E:", 1000,
+		dataprovider.FileInfo{Path: "folder/a.txt", Size: 10, Mtime: 100, Atime: 200, Uid: 7},
+		dataprovider.FileInfo{Path: "folder/b.txt", Size: 20, Mtime: 100, Atime: 200, Uid: 7},
+		dataprovider.FileInfo{Path: "folder/c.txt", Size: 30, Mtime: 100, Atime: 200, Uid: 7},
+	)
+	defer p.Finalize()
 
-	if err := d.SetSourceInfo("computername", "E:", 1000); err != nil {
-		t.Fatalf("SetSourceInfo returned error: %v", err)
-	}
-	if err := d.AddFile(dataprovider.FileInfo{Path: "folder/a.txt", Size: 10, Mtime: 100, Atime: 200, Uid: 7}); err != nil {
-		t.Fatalf("AddFile returned error: %v", err)
-	}
-	if err := d.AddFile(dataprovider.FileInfo{Path: "folder/b.txt", Size: 20, Mtime: 100, Atime: 200, Uid: 7}); err != nil {
-		t.Fatalf("AddFile returned error: %v", err)
-	}
-	if err := d.AddFile(dataprovider.FileInfo{Path: "folder/c.txt", Size: 30, Mtime: 100, Atime: 200, Uid: 7}); err != nil {
-		t.Fatalf("AddFile returned error: %v", err)
-	}
-
-	results, _, err := d.Search(dataprovider.SearchSelection{SizeMin: 15, SizeMax: 25, ResultsLimit: 10, Kind: -1, MtimeMin: -1, MtimeMax: -1, AtimeMin: -1, AtimeMax: -1})
+	results, _, err := p.Search(dataprovider.SearchSelection{SizeMin: 15, SizeMax: 25, ResultsLimit: 10, Kind: -1, MtimeMin: -1, MtimeMax: -1, AtimeMin: -1, AtimeMax: -1})
 	if err != nil {
 		t.Fatalf("Search returned error: %v", err)
 	}
@@ -326,6 +343,12 @@ func TestSearchSizeRangeOnly(t *testing.T) {
 
 func TestSimplePathTranslationIndexExists(t *testing.T) {
 	dbFile := filepath.Join(t.TempDir(), "db.sqlite")
+	filler, err := datafillersqlite.InitDataFillerSqlite(dbFile)
+	if err != nil {
+		t.Fatalf("InitDataFillerSqlite returned error: %v", err)
+	}
+	filler.Finalize()
+
 	d, err := dataprovidersqlite.InitDataProviderSqlite(dbFile)
 	if err != nil {
 		t.Fatalf("InitDataProviderSqlite returned error: %v", err)
@@ -349,18 +372,17 @@ func TestSimplePathTranslationIndexExists(t *testing.T) {
 
 func TestAddFileStoresServerShareRootAsSinglePathElement(t *testing.T) {
 	dbFile := filepath.Join(t.TempDir(), "db.sqlite")
-	d, err := dataprovidersqlite.InitDataProviderSqlite(dbFile)
+	filler, err := datafillersqlite.InitDataFillerSqlite(dbFile)
 	if err != nil {
-		t.Fatalf("InitDataProviderSqlite returned error: %v", err)
+		t.Fatalf("InitDataFillerSqlite returned error: %v", err)
 	}
-	defer d.Finalize()
-
-	if err := d.SetSourceInfo("", `\\server\share\Projects`, 1000); err != nil {
+	if err := filler.SetSourceInfo("", `\\server\share\Projects`, 1000); err != nil {
 		t.Fatalf("SetSourceInfo returned error: %v", err)
 	}
-	if err := d.AddFile(dataprovider.FileInfo{Path: "folder/file.txt", Size: 42, Mtime: 100, Atime: 200, Uid: 7}); err != nil {
+	if err := filler.AddFile(dataprovider.FileInfo{Path: "folder/file.txt", Size: 42, Mtime: 100, Atime: 200, Uid: 7}); err != nil {
 		t.Fatalf("AddFile returned error: %v", err)
 	}
+	filler.Finalize()
 
 	db, err := sql.Open("sqlite", dbFile)
 	if err != nil {
@@ -391,24 +413,29 @@ func TestAddFileStoresServerShareRootAsSinglePathElement(t *testing.T) {
 
 func TestDataSourcesReturnsRootNames(t *testing.T) {
 	dbFile := filepath.Join(t.TempDir(), "db.sqlite")
+	filler, err := datafillersqlite.InitDataFillerSqlite(dbFile)
+	if err != nil {
+		t.Fatalf("InitDataFillerSqlite returned error: %v", err)
+	}
+	if err := filler.SetSourceInfo("computername", "E:", 1000); err != nil {
+		t.Fatalf("SetSourceInfo first source returned error: %v", err)
+	}
+	if err := filler.AddFile(dataprovider.FileInfo{Path: "folder/file1.txt", Size: 42, Mtime: 100, Atime: 200, Uid: 7}); err != nil {
+		t.Fatalf("AddFile first source returned error: %v", err)
+	}
+	if err := filler.SetSourceInfo("", `\\server\share\Projects`, 1001); err != nil {
+		t.Fatalf("SetSourceInfo second source returned error: %v", err)
+	}
+	if err := filler.AddFile(dataprovider.FileInfo{Path: "folder/file2.txt", Size: 42, Mtime: 100, Atime: 200, Uid: 7}); err != nil {
+		t.Fatalf("AddFile second source returned error: %v", err)
+	}
+	filler.Finalize()
+
 	d, err := dataprovidersqlite.InitDataProviderSqlite(dbFile)
 	if err != nil {
 		t.Fatalf("InitDataProviderSqlite returned error: %v", err)
 	}
 	defer d.Finalize()
-
-	if err := d.SetSourceInfo("computername", "E:", 1000); err != nil {
-		t.Fatalf("SetSourceInfo first source returned error: %v", err)
-	}
-	if err := d.AddFile(dataprovider.FileInfo{Path: "folder/file1.txt", Size: 42, Mtime: 100, Atime: 200, Uid: 7}); err != nil {
-		t.Fatalf("AddFile first source returned error: %v", err)
-	}
-	if err := d.SetSourceInfo("", `\\server\share\Projects`, 1001); err != nil {
-		t.Fatalf("SetSourceInfo second source returned error: %v", err)
-	}
-	if err := d.AddFile(dataprovider.FileInfo{Path: "folder/file2.txt", Size: 42, Mtime: 100, Atime: 200, Uid: 7}); err != nil {
-		t.Fatalf("AddFile second source returned error: %v", err)
-	}
 
 	sources, err := d.DataSources()
 	if err != nil {
@@ -428,13 +455,11 @@ func TestDataSourcesReturnsRootNames(t *testing.T) {
 
 func TestRebuildDirTableAggregatesPerBatch(t *testing.T) {
 	dbFile := filepath.Join(t.TempDir(), "db.sqlite")
-	d, err := dataprovidersqlite.InitDataProviderSqlite(dbFile)
+	filler, err := datafillersqlite.InitDataFillerSqlite(dbFile)
 	if err != nil {
-		t.Fatalf("InitDataProviderSqlite returned error: %v", err)
+		t.Fatalf("InitDataFillerSqlite returned error: %v", err)
 	}
-	defer d.Finalize()
-
-	if err := d.SetSourceInfo("computername", "E:", 1000); err != nil {
+	if err := filler.SetSourceInfo("computername", "E:", 1000); err != nil {
 		t.Fatalf("SetSourceInfo returned error: %v", err)
 	}
 	for _, f := range []dataprovider.FileInfo{
@@ -442,13 +467,18 @@ func TestRebuildDirTableAggregatesPerBatch(t *testing.T) {
 		{Path: "folder/b.txt", Size: 20, Mtime: 600, Atime: 300, Uid: 1},
 		{Path: "folder/c.txt", Size: 30, Mtime: 700, Atime: 400, Uid: 1},
 	} {
-		if err := d.AddFile(f); err != nil {
+		if err := filler.AddFile(f); err != nil {
 			t.Fatalf("AddFile returned error: %v", err)
 		}
 	}
+	filler.Finalize()
 
+	filler, err = datafillersqlite.InitDataFillerSqlite(dbFile)
+	if err != nil {
+		t.Fatalf("InitDataFillerSqlite second call returned error: %v", err)
+	}
 	var lastCurrent int64
-	if err := d.RebuildDirTable(2, func(current, total int64) {
+	if err := filler.RebuildDirTable(2, func(current, total int64) {
 		lastCurrent = current
 		if total <= 0 {
 			t.Fatalf("progress total should be positive")
@@ -459,6 +489,7 @@ func TestRebuildDirTableAggregatesPerBatch(t *testing.T) {
 	if lastCurrent != 3 {
 		t.Fatalf("progress callback should reach the final file count, got %d want %d", lastCurrent, 3)
 	}
+	filler.Finalize()
 
 	db, err := sql.Open("sqlite", dbFile)
 	if err != nil {

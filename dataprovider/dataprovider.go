@@ -42,11 +42,8 @@ type SearchSelection struct {
 }
 
 type DataProvider interface {
-	SetSourceInfo(dataSource string, basePath string, acqTime int64) error
 	SourceInfo() (string, string, int64)
 	DataSources() ([]string, error)
-	AddFile(FileInfo) error
-	RebuildDirTable(batchSize int, progress ProgressFunc) error
 	DirExists(source string, dir string) (bool, error)
 	DirSizeTimeBins(source string, dir string) ([]uint64, []uint64, []TimeBin, error)
 	SubDirs(source string, dir string) ([]string, error)
@@ -55,6 +52,4 @@ type DataProvider interface {
 	SearchByName(name string, limit int) ([]SearchResult, map[string]interface{}, error)
 	SearchBySimpleName(name string, limit int) ([]SearchResult, map[string]interface{}, error)
 	Finalize()
-	StartTransaction() error
-	CommitTransaction() error
 }
