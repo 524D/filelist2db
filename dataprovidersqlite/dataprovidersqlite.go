@@ -296,6 +296,42 @@ func (d *DataProviderSqlite) resolvePathIDInSource(source string, dir string) (i
 	return parentID, nil
 }
 
+func (d *DataProviderSqlite) DirInfo(source string, dir string) (map[string]any, error) {
+	// DirSizeTimeBins(source string, dir string) ([]uint64, []uint64, []TimeBin, error)
+	// SubDirs(source string, dir string) ([]string, error)
+	// SubDirSize(source string, dir string) (uint64, error)
+	_, err := d.resolvePathIDInSource(source, dir)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	} else if err != nil {
+		return nil, err
+	}
+
+	mtimes, atimes, timeBins, err := d.DirSizeTimeBins(source, dir)
+	if err != nil {
+		return nil, err
+	}
+	info := make(map[string]any)
+	info["mtimes"] = mtimes
+	info["atimes"] = atimes
+	info["timeBins"] = timeBins
+	subDirs, err := d.SubDirs(source, dir)
+	if err != nil {
+		return nil, err
+	}
+	info["subDirs"] = subDirs
+	subdirSizes := make([]uint64, len(subDirs))
+	for _, subDir := range subDirs {
+		subDirSize, err := d.SubDirSize(source, (dir + "/" + subDir))
+		if err != nil {
+			return nil, err
+		}
+		subdirSizes = append(subdirSizes, subDirSize)
+	}
+	info["subdirSizes"] = subdirSizes
+	return info, nil
+}
+
 func (d *DataProviderSqlite) DirExists(source string, dir string) (bool, error) {
 	_, err := d.resolvePathIDInSource(source, dir)
 	if err == nil {

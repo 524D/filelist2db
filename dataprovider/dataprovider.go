@@ -44,6 +44,7 @@ type SearchSelection struct {
 type DataProvider interface {
 	SourceInfo() (string, string, int64)
 	DataSources() ([]string, error)
+	DirInfo(source string, dir string) (map[string]any, error)
 	DirExists(source string, dir string) (bool, error)
 	DirSizeTimeBins(source string, dir string) ([]uint64, []uint64, []TimeBin, error)
 	SubDirs(source string, dir string) ([]string, error)
