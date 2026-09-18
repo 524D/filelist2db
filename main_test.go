@@ -60,6 +60,56 @@ func initFilledProvider(t *testing.T, dbFile, source, basePath string, acqTime i
 	return p
 }
 
+func TestDirInfoSubdirSizesAreNotPaddedWithZeroes(t *testing.T) {
+	dbFile := filepath.Join(t.TempDir(), "db.sqlite")
+	f, err := datafillersqlite.InitDataFillerSqlite(dbFile)
+	if err != nil {
+		t.Fatalf("InitDataFillerSqlite returned error: %v", err)
+	}
+	if err := f.SetSourceInfo("computername", "E:", 1000); err != nil {
+		t.Fatalf("SetSourceInfo returned error: %v", err)
+	}
+	if err := f.AddFile(dataprovider.FileInfo{Path: "folder/file.txt", Size: 42, Mtime: 100, Atime: 200, Uid: 7}); err != nil {
+		t.Fatalf("AddFile returned error: %v", err)
+	}
+	if err := f.AddFile(dataprovider.FileInfo{Path: "folder/other.bin", Size: 7, Mtime: 100, Atime: 200, Uid: 7}); err != nil {
+		t.Fatalf("AddFile second file returned error: %v", err)
+	}
+	if err := f.RebuildDirTable(1000, nil); err != nil {
+		t.Fatalf("RebuildDirTable returned error: %v", err)
+	}
+	f.Finalize()
+
+	p, err := dataprovidersqlite.InitDataProviderSqlite(dbFile)
+	if err != nil {
+		t.Fatalf("InitDataProviderSqlite returned error: %v", err)
+	}
+	defer p.Finalize()
+
+	info, err := p.DirInfo("computername", "E:")
+	if err != nil {
+		t.Fatalf("DirInfo returned error: %v", err)
+	}
+	if info == nil {
+		t.Fatal("DirInfo returned nil info")
+	}
+
+	value := reflect.ValueOf(info["subDirs"])
+	if value.Kind() != reflect.Slice || value.Len() != 1 {
+		t.Fatalf("subDirs has kind %s length %d, want slice(len=1)", value.Kind(), value.Len())
+	}
+	first := value.Index(0)
+	if first.FieldByName("Name").String() != "folder" {
+		t.Fatalf("subDirs[0].Name mismatch: got %q want %q", first.FieldByName("Name").String(), "folder")
+	}
+	if first.FieldByName("Size").Uint() != 49 {
+		t.Fatalf("subDirs[0].Size mismatch: got %d want %d", first.FieldByName("Size").Uint(), 49)
+	}
+	if first.FieldByName("FileCount").Int() != 2 {
+		t.Fatalf("subDirs[0].FileCount mismatch: got %d want %d", first.FieldByName("FileCount").Int(), 2)
+	}
+}
+
 func TestDecodeFindFilename(t *testing.T) {
 	computer, basePath, ts, err := decodeFindFilename(`testdata/_computername_E%3A_20220301-134000.lst`)
 	if err != nil {

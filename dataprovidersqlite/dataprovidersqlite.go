@@ -296,6 +296,12 @@ func (d *DataProviderSqlite) resolvePathIDInSource(source string, dir string) (i
 	return parentID, nil
 }
 
+type subDirStats struct {
+	Name      string
+	Size      uint64
+	FileCount int64
+}
+
 func (d *DataProviderSqlite) DirInfo(source string, dir string) (map[string]any, error) {
 	pathID, err := d.resolvePathIDInSource(source, dir)
 	if err == sql.ErrNoRows {
@@ -317,7 +323,7 @@ func (d *DataProviderSqlite) DirInfo(source string, dir string) (map[string]any,
 	}
 
 	rows, err := d.db.Query(`
-		SELECT pe.elem, d.total_size
+		SELECT pe.elem, COALESCE(d.total_size, 0), COALESCE(d.file_count, 0)
 		FROM path p
 		JOIN path_elem pe ON pe.id = p.path_elem_id
 		LEFT JOIN dir d ON d.path_id = p.id
@@ -328,20 +334,19 @@ func (d *DataProviderSqlite) DirInfo(source string, dir string) (map[string]any,
 	}
 	defer rows.Close()
 
-	subDirs := make([]string, 0)
-	subdirSizes := make([]uint64, 0)
+	subDirs := make([]subDirStats, 0)
 	for rows.Next() {
 		var elem string
-		var totalSize sql.NullInt64
-		if err := rows.Scan(&elem, &totalSize); err != nil {
+		var totalSize int64
+		var fileCount int64
+		if err := rows.Scan(&elem, &totalSize, &fileCount); err != nil {
 			return nil, err
 		}
-		subDirs = append(subDirs, elem)
-		if totalSize.Valid {
-			subdirSizes = append(subdirSizes, uint64(totalSize.Int64))
-		} else {
-			subdirSizes = append(subdirSizes, 0)
-		}
+		subDirs = append(subDirs, subDirStats{
+			Name:      elem,
+			Size:      uint64(totalSize),
+			FileCount: fileCount,
+		})
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err
@@ -352,7 +357,6 @@ func (d *DataProviderSqlite) DirInfo(source string, dir string) (map[string]any,
 	info["atimes"] = aSizes
 	info["timeBins"] = timeBins
 	info["subDirs"] = subDirs
-	info["subdirSizes"] = subdirSizes
 	return info, nil
 }
 
