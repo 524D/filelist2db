@@ -6,6 +6,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"log"
 	"net/url"
 	"os"
 	"regexp"
@@ -69,16 +70,13 @@ func parseCmdLine() []string {
 	for _, fn := range files {
 		inf, err := os.Stat(fn)
 		if err != nil {
-			fmt.Fprintln(os.Stdout, "File ", fn, " error: ", err)
-			flag.Usage()
+			log.Fatal("Error accessing file: ", fn, ": ", err)
 		}
 		if inf.IsDir() {
-			fmt.Fprintln(os.Stdout, "File is a directory: ", fn)
-			flag.Usage()
+			log.Fatal("File is a directory: ", fn)
 		}
 		if inf.Size() == 0 {
-			fmt.Fprintln(os.Stdout, "File is empty: ", fn)
-			flag.Usage()
+			log.Fatal("File is empty: ", fn)
 		}
 	}
 
