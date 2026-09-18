@@ -296,12 +296,6 @@ func (d *DataProviderSqlite) resolvePathIDInSource(source string, dir string) (i
 	return parentID, nil
 }
 
-type subDirStats struct {
-	Name      string
-	Size      uint64
-	FileCount int64
-}
-
 func (d *DataProviderSqlite) DirInfo(source string, dir string) (map[string]any, error) {
 	pathID, err := d.resolvePathIDInSource(source, dir)
 	if err == sql.ErrNoRows {
@@ -334,7 +328,7 @@ func (d *DataProviderSqlite) DirInfo(source string, dir string) (map[string]any,
 	}
 	defer rows.Close()
 
-	subDirs := make([]subDirStats, 0)
+	subDirs := make([]dataprovider.SubDirStats, 0)
 	for rows.Next() {
 		var elem string
 		var totalSize int64
@@ -342,7 +336,7 @@ func (d *DataProviderSqlite) DirInfo(source string, dir string) (map[string]any,
 		if err := rows.Scan(&elem, &totalSize, &fileCount); err != nil {
 			return nil, err
 		}
-		subDirs = append(subDirs, subDirStats{
+		subDirs = append(subDirs, dataprovider.SubDirStats{
 			Name:      elem,
 			Size:      uint64(totalSize),
 			FileCount: fileCount,

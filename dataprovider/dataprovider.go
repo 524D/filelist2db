@@ -22,6 +22,12 @@ type SearchResult struct {
 	TotalSize uint64
 }
 
+type SubDirStats struct {
+	Name      string
+	Size      uint64
+	FileCount int64
+}
+
 type TimeBin struct {
 	MaxAgeS uint64 // Maximum age in seconds
 	Txt     string // Textual description of time bin
