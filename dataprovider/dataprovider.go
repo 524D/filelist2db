@@ -22,6 +22,7 @@ type SearchResult struct {
 	TotalSize uint64
 }
 
+// SubDirStats contains info about a subdirectory: its name, cumulative size, and cumulative file count.
 type SubDirStats struct {
 	Name      string
 	Size      uint64
@@ -48,15 +49,16 @@ type SearchSelection struct {
 }
 
 type DataProvider interface {
-	SourceInfo() (string, string, int64)
+	// Returns the list of data sources available in the provider.
+	// Sources are either a computer name or a network share name
 	DataSources() ([]string, error)
+	// Returns a map, where the keys are the names of the directories in the given source and path,
+	// and the values are the corresponding directory information.
 	DirInfo(source string, dir string) (map[string]any, error)
-	DirExists(source string, dir string) (bool, error)
-	DirSizeTimeBins(source string, dir string) ([]uint64, []uint64, []TimeBin, error)
-	SubDirs(source string, dir string) ([]string, error)
-	SubDirSize(source string, dir string) (uint64, error)
+	// Returns the list of files and directories that match the given search criteria.
 	Search(selection SearchSelection) ([]SearchResult, map[string]interface{}, error)
-	SearchByName(name string, limit int) ([]SearchResult, map[string]interface{}, error)
+	// Returns the list of files and directories that match the given simplified name.
 	SearchBySimpleName(name string, limit int) ([]SearchResult, map[string]interface{}, error)
+	// Close all resources associated with the data provider.
 	Finalize()
 }

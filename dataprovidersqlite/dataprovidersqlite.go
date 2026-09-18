@@ -223,10 +223,6 @@ func (d *DataProviderSqlite) pathElems(dir string) []string {
 // The file table stores the file information, linked to the path table.
 // The dir table stores the directory information, linked to the path table.
 
-func (d *DataProviderSqlite) SourceInfo() (string, string, int64) {
-	return d.dataSource, d.basePath, d.acqTime
-}
-
 func (d *DataProviderSqlite) DataSources() ([]string, error) {
 	rows, err := d.stmtSelectRootSources.Query()
 	if err != nil {
@@ -246,27 +242,6 @@ func (d *DataProviderSqlite) DataSources() ([]string, error) {
 		return nil, err
 	}
 	return sources, nil
-}
-
-func (d *DataProviderSqlite) resolvePathID(dir string) (int64, error) {
-	elems := d.pathElems(dir)
-	if len(elems) == 0 {
-		return 0, sql.ErrNoRows
-	}
-
-	parentID := int64(-1)
-	for _, elem := range elems {
-		var pathElemID int64
-		if err := d.stmtSelectPathElem.QueryRow(elem).Scan(&pathElemID); err != nil {
-			return 0, err
-		}
-		var id int64
-		if err := d.stmtSelectPathIDByElemAndParentPathID.QueryRow(pathElemID, parentID).Scan(&id); err != nil {
-			return 0, err
-		}
-		parentID = id
-	}
-	return parentID, nil
 }
 
 // Resolve the path ID for a directory under a given source root
@@ -354,17 +329,6 @@ func (d *DataProviderSqlite) DirInfo(source string, dir string) (map[string]any,
 	return info, nil
 }
 
-func (d *DataProviderSqlite) DirExists(source string, dir string) (bool, error) {
-	_, err := d.resolvePathIDInSource(source, dir)
-	if err == nil {
-		return true, nil
-	}
-	if err == sql.ErrNoRows {
-		return false, nil
-	}
-	return false, err
-}
-
 var timeBins = []dataprovider.TimeBin{
 	{MaxAgeS: (3600 * 24 * 30), Txt: "< 1 month"},
 	{MaxAgeS: (3600 * 24 * 90), Txt: "1 to 3 months"},
@@ -372,60 +336,6 @@ var timeBins = []dataprovider.TimeBin{
 	{MaxAgeS: (3600 * 24 * 365 * 3), Txt: "1 to 3 years"},
 	{MaxAgeS: (3600 * 24 * 365 * 5), Txt: "3-5 years"},
 	{MaxAgeS: (3600 * 24 * 365 * 999), Txt: "> 5 years"},
-}
-
-func (d *DataProviderSqlite) DirSizeTimeBins(source string, dir string) ([]uint64, []uint64, []dataprovider.TimeBin, error) {
-	pathID, err := d.resolvePathIDInSource(source, dir)
-	if err != nil {
-		return nil, nil, timeBins, err
-	}
-	// Obtain all time bins for the directory in a single query, to avoid multiple queries and improve performance
-	var mSizes = make([]uint64, 6)
-	var aSizes = make([]uint64, 6)
-	if err := d.stmtSelectDirSummary.QueryRow(pathID).Scan(&mSizes[0], &mSizes[1], &mSizes[2], &mSizes[3], &mSizes[4], &mSizes[5],
-		&aSizes[0], &aSizes[1], &aSizes[2], &aSizes[3], &aSizes[4], &aSizes[5]); err != nil {
-		if err == sql.ErrNoRows {
-			return nil, nil, timeBins, nil
-		}
-		return nil, nil, timeBins, err
-	}
-	return mSizes, aSizes, timeBins, nil
-}
-
-func (d *DataProviderSqlite) SubDirs(source string, dir string) ([]string, error) {
-	pathID, err := d.resolvePathIDInSource(source, dir)
-	if err != nil {
-		return nil, err
-	}
-	rows, err := d.stmtSelectSubDirs.Query(pathID)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	out := make([]string, 0)
-	for rows.Next() {
-		var elem string
-		if err := rows.Scan(&elem); err != nil {
-			return nil, err
-		}
-		out = append(out, elem)
-	}
-	return out, rows.Err()
-}
-
-func (d *DataProviderSqlite) SubDirSize(source string, dir string) (uint64, error) {
-	pathID, err := d.resolvePathIDInSource(source, dir)
-	if err != nil {
-		return 0, err
-	}
-	var totalSize int64
-	if err := d.stmtSelectDirTotalSize.QueryRow(pathID).Scan(&totalSize); err != nil {
-		if err == sql.ErrNoRows {
-			return 0, nil
-		}
-		return 0, err
-	}
-	return uint64(totalSize), nil
 }
 
 type SameFiles struct {
@@ -653,80 +563,6 @@ func (d *DataProviderSqlite) Search(selection dataprovider.SearchSelection) ([]d
 			TotalSize: uint64(totalSize),
 		})
 	}
-	if err := rows.Err(); err != nil {
-		return nil, meta(), err
-	}
-	return results, meta(), nil
-}
-
-func (d *DataProviderSqlite) SearchByName(name string, limit int) ([]dataprovider.SearchResult, map[string]interface{}, error) {
-	start := time.Now()
-	meta := func() map[string]interface{} {
-		return map[string]interface{}{"SearchTimeMicroSeconds": time.Since(start).Microseconds()}
-	}
-
-	term := strings.TrimSpace(name)
-	if len(term) < 4 {
-		return nil, meta(), nil
-	}
-	if limit <= 0 || limit > 20 {
-		limit = 20
-	}
-
-	query := "%" + strings.ToLower(term) + "%"
-
-	rows, err := d.db.Query(`
-        SELECT kind, path_id, size, mtime, atime, file_count, total_size
-        FROM (
-            SELECT 'file' AS kind, f.path_id AS path_id, f.size AS size, f.mtime AS mtime, f.atime AS atime, 0 AS file_count, 0 AS total_size
-            FROM file AS f
-            JOIN path AS p ON p.id = f.path_id
-            JOIN path_elem AS pe ON pe.id = p.path_elem_id
-            WHERE LOWER(pe.elem) LIKE ?
-            UNION ALL
-            SELECT 'directory' AS kind, d.path_id AS path_id, d.total_size AS size, 0 AS mtime, 0 AS atime, d.file_count AS file_count, d.total_size AS total_size
-            FROM dir AS d
-            JOIN path AS p ON p.id = d.path_id
-            JOIN path_elem AS pe ON pe.id = p.path_elem_id
-            WHERE LOWER(pe.elem) LIKE ?
-        )
-        ORDER BY path_id
-        LIMIT ?`, query, query, limit)
-	if err != nil {
-		return nil, meta(), err
-	}
-	defer rows.Close()
-
-	results := make([]dataprovider.SearchResult, 0, limit)
-	for rows.Next() {
-		var kind string
-		var pathID int64
-		var size int64
-		var mtime int64
-		var atime int64
-		var fileCount int64
-		var totalSize int64
-
-		if err := rows.Scan(&kind, &pathID, &size, &mtime, &atime, &fileCount, &totalSize); err != nil {
-			return nil, meta(), err
-		}
-
-		path, err := d.resolvePathByID(pathID)
-		if err != nil {
-			return nil, meta(), err
-		}
-
-		results = append(results, dataprovider.SearchResult{
-			Kind:      kind,
-			Path:      path,
-			Size:      uint64(size),
-			Mtime:     mtime,
-			Atime:     atime,
-			FileCount: fileCount,
-			TotalSize: uint64(totalSize),
-		})
-	}
-
 	if err := rows.Err(); err != nil {
 		return nil, meta(), err
 	}
