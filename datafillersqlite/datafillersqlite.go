@@ -614,15 +614,17 @@ func (d *DataFillerSqlite) SetSourceInfo(dataSource string, basePath string, acq
 	if len(elems) == 0 {
 		return nil
 	}
+
+	pathElems, err := d.addPathElems(elems)
+	if err != nil {
+		return err
+	}
+
 	parentId := int64(-1)
-	for _, elem := range elems {
-		var peID int64
-		if err := d.stmtSelectPathElem.QueryRow(elem).Scan(&peID); err != nil {
-			return nil
-		}
-		var id int64
-		if err := d.stmtSelectPathIDByElemAndParentPathID.QueryRow(peID, parentId).Scan(&id); err != nil {
-			return nil
+	for _, peID := range pathElems {
+		id, err := d.ensurePath(peID, parentId, nodeTypeDir)
+		if err != nil {
+			return err
 		}
 		parentId = id
 	}

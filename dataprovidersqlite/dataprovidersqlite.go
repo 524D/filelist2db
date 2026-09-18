@@ -297,37 +297,61 @@ func (d *DataProviderSqlite) resolvePathIDInSource(source string, dir string) (i
 }
 
 func (d *DataProviderSqlite) DirInfo(source string, dir string) (map[string]any, error) {
-	// DirSizeTimeBins(source string, dir string) ([]uint64, []uint64, []TimeBin, error)
-	// SubDirs(source string, dir string) ([]string, error)
-	// SubDirSize(source string, dir string) (uint64, error)
-	_, err := d.resolvePathIDInSource(source, dir)
+	pathID, err := d.resolvePathIDInSource(source, dir)
 	if err == sql.ErrNoRows {
 		return nil, nil
 	} else if err != nil {
 		return nil, err
 	}
 
-	mtimes, atimes, timeBins, err := d.DirSizeTimeBins(source, dir)
-	if err != nil {
-		return nil, err
-	}
-	info := make(map[string]any)
-	info["mtimes"] = mtimes
-	info["atimes"] = atimes
-	info["timeBins"] = timeBins
-	subDirs, err := d.SubDirs(source, dir)
-	if err != nil {
-		return nil, err
-	}
-	info["subDirs"] = subDirs
-	subdirSizes := make([]uint64, len(subDirs))
-	for _, subDir := range subDirs {
-		subDirSize, err := d.SubDirSize(source, (dir + "/" + subDir))
-		if err != nil {
+	var mSizes = make([]uint64, 6)
+	var aSizes = make([]uint64, 6)
+	if err := d.stmtSelectDirSummary.QueryRow(pathID).Scan(&mSizes[0], &mSizes[1], &mSizes[2], &mSizes[3], &mSizes[4], &mSizes[5],
+		&aSizes[0], &aSizes[1], &aSizes[2], &aSizes[3], &aSizes[4], &aSizes[5]); err != nil {
+		if err == sql.ErrNoRows {
+			mSizes = make([]uint64, 6)
+			aSizes = make([]uint64, 6)
+		} else {
 			return nil, err
 		}
-		subdirSizes = append(subdirSizes, subDirSize)
 	}
+
+	rows, err := d.db.Query(`
+		SELECT pe.elem, d.total_size
+		FROM path p
+		JOIN path_elem pe ON pe.id = p.path_elem_id
+		LEFT JOIN dir d ON d.path_id = p.id
+		WHERE p.parent_id = ? AND p.node_type != 0
+		ORDER BY pe.elem`, pathID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	subDirs := make([]string, 0)
+	subdirSizes := make([]uint64, 0)
+	for rows.Next() {
+		var elem string
+		var totalSize sql.NullInt64
+		if err := rows.Scan(&elem, &totalSize); err != nil {
+			return nil, err
+		}
+		subDirs = append(subDirs, elem)
+		if totalSize.Valid {
+			subdirSizes = append(subdirSizes, uint64(totalSize.Int64))
+		} else {
+			subdirSizes = append(subdirSizes, 0)
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	info := make(map[string]any)
+	info["mtimes"] = mSizes
+	info["atimes"] = aSizes
+	info["timeBins"] = timeBins
+	info["subDirs"] = subDirs
 	info["subdirSizes"] = subdirSizes
 	return info, nil
 }
