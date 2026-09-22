@@ -145,13 +145,17 @@ func openDatabase(dbFile string) (*sql.DB, error) {
 	if err != nil {
 		return nil, err
 	}
+	if _, err = db.Exec(`PRAGMA cache_size = -131072`); err != nil {
+		db.Close()
+		return nil, err
+	}
 	return db, nil
 }
 
 func createTables(db *sql.DB) error {
 	_, err := db.Exec(`CREATE TABLE IF NOT EXISTS path_elem (
 		id INTEGER PRIMARY KEY,
-		elem TEXT UNIQUE
+		elem TEXT UNIQUE NOT NULL
 	)`)
 	if err != nil {
 		return err
@@ -159,9 +163,9 @@ func createTables(db *sql.DB) error {
 
 	_, err = db.Exec(`CREATE TABLE IF NOT EXISTS path (
 		id INTEGER PRIMARY KEY,
-		parent_id INTEGER,
-		path_elem_id INTEGER,
-		node_type INTEGER
+		parent_id INTEGER NOT NULL DEFAULT 0,
+		path_elem_id INTEGER NOT NULL DEFAULT 0,
+		node_type INTEGER NOT NULL DEFAULT 0
 	)`)
 	if err != nil {
 		return err
@@ -172,13 +176,20 @@ func createTables(db *sql.DB) error {
 		return err
 	}
 
+	_, err = db.Exec(`CREATE INDEX IF NOT EXISTS path_parent_idx ON path (parent_id)`)
+	if err != nil {
+		return err
+	}
+
 	_, err = db.Exec(`CREATE TABLE IF NOT EXISTS file (
 		id INTEGER PRIMARY KEY,
-		path_id INTEGER,
-		size INTEGER,
-		mtime INTEGER,
-		atime INTEGER,
-		uid INTEGER
+		path_id INTEGER NOT NULL DEFAULT 0,
+-- TODO: Consider adding a parent_id column for speedup
+--		parent_id INTEGER NOT NULL DEFAULT 0, // Redundant column for fast lookup.
+		size INTEGER NOT NULL DEFAULT 0,
+		mtime INTEGER NOT NULL DEFAULT 0,
+		atime INTEGER NOT NULL DEFAULT 0,
+		uid INTEGER NOT NULL DEFAULT 0
 	)`)
 	if err != nil {
 		return err
@@ -186,7 +197,7 @@ func createTables(db *sql.DB) error {
 
 	_, err = db.Exec(`CREATE TABLE IF NOT EXISTS simple_path_elem (
 		id INTEGER PRIMARY KEY,
-		simple_elem TEXT UNIQUE
+		simple_elem TEXT UNIQUE NOT NULL
 	)`)
 	if err != nil {
 		return err
@@ -198,8 +209,8 @@ func createTables(db *sql.DB) error {
 
 	_, err = db.Exec(`CREATE TABLE IF NOT EXISTS simple_path_translate (
 		id INTEGER PRIMARY KEY,
-		simple_path_elem_id INTEGER,
-		path_elem_id INTEGER
+		simple_path_elem_id INTEGER NOT NULL DEFAULT 0,
+		path_elem_id INTEGER NOT NULL DEFAULT 0
 	)`)
 	if err != nil {
 		return err
@@ -235,7 +246,7 @@ func createTables(db *sql.DB) error {
 
 	_, err = db.Exec(`CREATE TABLE IF NOT EXISTS input_file (
 		id INTEGER PRIMARY KEY,
-		path_id INTEGER,
+		path_id INTEGER NOT NULL DEFAULT 0,
 		timestamp INTEGER NOT NULL DEFAULT 0
 	)`)
 	if err != nil {
@@ -327,10 +338,6 @@ func (d *DataFillerSqlite) Finalize() {
 }
 
 func simplifyPathElem(elem string) string {
-	p := strings.Index(elem, ".")
-	if p != -1 {
-		elem = elem[:p]
-	}
 	elem = strings.TrimSpace(elem)
 	elem = strings.TrimLeft(elem, "0")
 	elem = strings.Map(func(r rune) rune {

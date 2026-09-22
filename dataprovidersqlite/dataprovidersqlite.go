@@ -10,14 +10,6 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-// Define node types in path table
-const (
-	nodeTypeFile         = 0
-	nodeTypeDir          = 1
-	nodeTypeComputerName = 2
-	nodeTypeShareName    = 3
-)
-
 // DataProviderSqlite implements the read-only DataProvider interface.
 type DataProviderSqlite struct {
 	db                    *sql.DB
@@ -92,6 +84,10 @@ func openReadOnlyDatabase(dbFile string) (*sql.DB, error) {
 	dsn := "file:" + filepath.ToSlash(dbFile) + "?_mode=ro"
 	db, err := sql.Open("sqlite", dsn)
 	if err != nil {
+		return nil, err
+	}
+	if _, err = db.Exec(`PRAGMA cache_size = -131072`); err != nil {
+		db.Close()
 		return nil, err
 	}
 	return db, nil
@@ -292,7 +288,7 @@ func (d *DataProviderSqlite) DirInfo(source string, dir string) (map[string]any,
 	}
 
 	rows, err := d.db.Query(`
-		SELECT pe.elem, COALESCE(d.total_size, 0), COALESCE(d.file_count, 0)
+		SELECT pe.elem, d.total_size, d.file_count
 		FROM path p
 		JOIN path_elem pe ON pe.id = p.path_elem_id
 		LEFT JOIN dir d ON d.path_id = p.id

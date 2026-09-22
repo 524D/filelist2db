@@ -248,7 +248,9 @@ func processListFile(d datafiller.DataFiller, fn string) error {
 		pct := current * 100 / total
 		bar.Set64(pct)
 	}
-	return parseFileList(d, f, progress)
+	err = parseFileList(d, f, progress)
+	println()
+	return err
 }
 
 func main() {
@@ -292,7 +294,7 @@ func main() {
 			pct := current * 100 / total
 			bar.Set64(pct)
 		}
-		err = f.RebuildDirTable(10000, progress)
+		err = f.RebuildDirTable(100000, progress)
 		if err != nil {
 			panic(err)
 		}
