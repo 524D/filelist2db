@@ -184,8 +184,6 @@ func createTables(db *sql.DB) error {
 	_, err = db.Exec(`CREATE TABLE IF NOT EXISTS file (
 		id INTEGER PRIMARY KEY,
 		path_id INTEGER NOT NULL DEFAULT 0,
--- TODO: Consider adding a parent_id column for speedup
---		parent_id INTEGER NOT NULL DEFAULT 0, // Redundant column for fast lookup.
 		size INTEGER NOT NULL DEFAULT 0,
 		mtime INTEGER NOT NULL DEFAULT 0,
 		atime INTEGER NOT NULL DEFAULT 0,
@@ -260,7 +258,7 @@ func createTables(db *sql.DB) error {
 	if err != nil {
 		return err
 	}
-	_, err = db.Exec(`CREATE UNIQUE INDEX IF NOT EXISTS dir_path_unique_idx ON dir (path_id)`)
+	_, err = db.Exec(`CREATE INDEX IF NOT EXISTS dir_path_idx ON dir (path_id)`)
 	if err != nil {
 		return err
 	}

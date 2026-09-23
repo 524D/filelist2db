@@ -183,22 +183,6 @@ func (d *DataProviderSqlite) sourceRootElems() []string {
 	return elems
 }
 
-func (d *DataProviderSqlite) pathElems(dir string) []string {
-	elems := d.sourceRootElems()
-	trimmed := strings.TrimSpace(dir)
-	if trimmed == "" || trimmed == "." {
-		return elems
-	}
-	trimmed = strings.ReplaceAll(trimmed, "\\", "/")
-	trimmed = strings.TrimLeft(trimmed, "/")
-	for _, part := range strings.Split(trimmed, "/") {
-		if part != "" && part != "." {
-			elems = append(elems, part)
-		}
-	}
-	return elems
-}
-
 // Database design
 // The database stores for each file:
 // - The file's path
@@ -575,7 +559,7 @@ func (d *DataProviderSqlite) SearchBySimpleName(name string, limit int) ([]datap
 	if len(term) == 0 {
 		return nil, meta(), nil
 	}
-	if limit <= 0 || limit > 20 {
+	if limit <= 0 {
 		limit = 20
 	}
 
@@ -588,14 +572,6 @@ func (d *DataProviderSqlite) SearchBySimpleName(name string, limit int) ([]datap
 	rows, err := d.db.Query(`
         SELECT kind, path_id, size, mtime, atime, file_count, total_size
         FROM (
-            SELECT 'file' AS kind, f.path_id AS path_id, f.size AS size, f.mtime AS mtime, f.atime AS atime, 0 AS file_count, 0 AS total_size
-            FROM file AS f
-            JOIN path AS p ON p.id = f.path_id
-            JOIN path_elem AS pe ON pe.id = p.path_elem_id
-            JOIN simple_path_translate AS spt ON spt.path_elem_id = pe.id
-            JOIN simple_path_elem AS spe ON spe.id = spt.simple_path_elem_id
-            WHERE spe.simple_elem LIKE ?
-            UNION ALL
             SELECT 'directory' AS kind, d.path_id AS path_id, d.total_size AS size, 0 AS mtime, 0 AS atime, d.file_count AS file_count, d.total_size AS total_size
             FROM dir AS d
             JOIN path AS p ON p.id = d.path_id
@@ -603,8 +579,15 @@ func (d *DataProviderSqlite) SearchBySimpleName(name string, limit int) ([]datap
             JOIN simple_path_translate AS spt ON spt.path_elem_id = pe.id
             JOIN simple_path_elem AS spe ON spe.id = spt.simple_path_elem_id
             WHERE spe.simple_elem LIKE ?
+            UNION ALL
+            SELECT 'file' AS kind, f.path_id AS path_id, f.size AS size, f.mtime AS mtime, f.atime AS atime, 0 AS file_count, 0 AS total_size
+            FROM file AS f
+            JOIN path AS p ON p.id = f.path_id
+            JOIN path_elem AS pe ON pe.id = p.path_elem_id
+            JOIN simple_path_translate AS spt ON spt.path_elem_id = pe.id
+            JOIN simple_path_elem AS spe ON spe.id = spt.simple_path_elem_id
+            WHERE spe.simple_elem LIKE ?
         )
-        ORDER BY path_id
         LIMIT ?`, prefixTerm, prefixTerm, limit)
 	if err != nil {
 		return nil, meta(), err
