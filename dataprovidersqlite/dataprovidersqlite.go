@@ -569,50 +569,12 @@ func (d *DataProviderSqlite) SearchBySimpleName(name string, limit int) ([]datap
 	}
 	prefixTerm := simpleTerm + "%"
 
-	rows, err := d.db.Query(`
-        SELECT kind, path_id, size, mtime, atime, file_count, total_size
-        FROM (
-            SELECT 'directory' AS kind, d.path_id AS path_id, d.total_size AS size, 0 AS mtime, 0 AS atime, d.file_count AS file_count, d.total_size AS total_size
-            FROM dir AS d
-            JOIN path AS p ON p.id = d.path_id
-            JOIN path_elem AS pe ON pe.id = p.path_elem_id
-            JOIN simple_path_translate AS spt ON spt.path_elem_id = pe.id
-            JOIN simple_path_elem AS spe ON spe.id = spt.simple_path_elem_id
-            WHERE spe.simple_elem LIKE ?
-            UNION ALL
-            SELECT 'file' AS kind, f.path_id AS path_id, f.size AS size, f.mtime AS mtime, f.atime AS atime, 0 AS file_count, 0 AS total_size
-            FROM file AS f
-            JOIN path AS p ON p.id = f.path_id
-            JOIN path_elem AS pe ON pe.id = p.path_elem_id
-            JOIN simple_path_translate AS spt ON spt.path_elem_id = pe.id
-            JOIN simple_path_elem AS spe ON spe.id = spt.simple_path_elem_id
-            WHERE spe.simple_elem LIKE ?
-        )
-        LIMIT ?`, prefixTerm, prefixTerm, limit)
-	if err != nil {
-		return nil, meta(), err
-	}
-	defer rows.Close()
-
 	results := make([]dataprovider.SearchResult, 0, limit)
-	for rows.Next() {
-		var kind string
-		var pathID int64
-		var size int64
-		var mtime int64
-		var atime int64
-		var fileCount int64
-		var totalSize int64
-
-		if err := rows.Scan(&kind, &pathID, &size, &mtime, &atime, &fileCount, &totalSize); err != nil {
-			return nil, meta(), err
-		}
-
+	addResult := func(kind string, pathID int64, size int64, mtime int64, atime int64, fileCount int64, totalSize int64) error {
 		path, err := d.resolvePathByID(pathID)
 		if err != nil {
-			return nil, meta(), err
+			return err
 		}
-
 		results = append(results, dataprovider.SearchResult{
 			Kind:      kind,
 			Path:      path,
@@ -622,9 +584,74 @@ func (d *DataProviderSqlite) SearchBySimpleName(name string, limit int) ([]datap
 			FileCount: fileCount,
 			TotalSize: uint64(totalSize),
 		})
+		return nil
 	}
 
-	if err := rows.Err(); err != nil {
+	dirRows, err := d.db.Query(`
+		SELECT DISTINCT d.path_id, d.total_size, d.file_count
+		FROM dir AS d
+		JOIN path AS p ON p.id = d.path_id
+		JOIN simple_path_translate AS spt ON spt.path_elem_id = p.path_elem_id
+		JOIN simple_path_elem AS spe ON spe.id = spt.simple_path_elem_id
+		WHERE spe.simple_elem LIKE ?
+		LIMIT ?`, prefixTerm, limit)
+	if err != nil {
+		return nil, meta(), err
+	}
+	defer dirRows.Close()
+
+	for dirRows.Next() {
+		var pathID int64
+		var totalSize int64
+		var fileCount int64
+		if err := dirRows.Scan(&pathID, &totalSize, &fileCount); err != nil {
+			return nil, meta(), err
+		}
+		if len(results) >= limit {
+			break
+		}
+		if err := addResult("directory", pathID, totalSize, 0, 0, fileCount, totalSize); err != nil {
+			return nil, meta(), err
+		}
+	}
+	if err := dirRows.Err(); err != nil {
+		return nil, meta(), err
+	}
+
+	fileLimit := limit - len(results)
+	if fileLimit <= 0 {
+		return results, meta(), nil
+	}
+
+	fileRows, err := d.db.Query(`
+		SELECT DISTINCT f.path_id, f.size, f.mtime, f.atime
+		FROM file AS f
+		JOIN path AS p ON p.id = f.path_id
+		JOIN simple_path_translate AS spt ON spt.path_elem_id = p.path_elem_id
+		JOIN simple_path_elem AS spe ON spe.id = spt.simple_path_elem_id
+		WHERE spe.simple_elem LIKE ?
+		LIMIT ?`, prefixTerm, fileLimit)
+	if err != nil {
+		return nil, meta(), err
+	}
+	defer fileRows.Close()
+
+	for fileRows.Next() {
+		var pathID int64
+		var size int64
+		var mtime int64
+		var atime int64
+		if err := fileRows.Scan(&pathID, &size, &mtime, &atime); err != nil {
+			return nil, meta(), err
+		}
+		if len(results) >= limit {
+			break
+		}
+		if err := addResult("file", pathID, size, mtime, atime, 0, 0); err != nil {
+			return nil, meta(), err
+		}
+	}
+	if err := fileRows.Err(); err != nil {
 		return nil, meta(), err
 	}
 	return results, meta(), nil
