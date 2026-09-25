@@ -60,6 +60,47 @@ func initFilledProvider(t *testing.T, dbFile, source, basePath string, acqTime i
 	return p
 }
 
+func TestDirInfoIncludesAcquisitionTimeRange(t *testing.T) {
+	dbFile := filepath.Join(t.TempDir(), "db.sqlite")
+	f, err := datafillersqlite.InitDataFillerSqlite(dbFile)
+	if err != nil {
+		t.Fatalf("InitDataFillerSqlite returned error: %v", err)
+	}
+	if err := f.SetSourceInfo("computername", "E:", 1000); err != nil {
+		t.Fatalf("SetSourceInfo returned error: %v", err)
+	}
+	if err := f.AddFile(dataprovider.FileInfo{Path: "old.txt", Size: 10, Mtime: 500, Atime: 200, Uid: 7}); err != nil {
+		t.Fatalf("AddFile old file returned error: %v", err)
+	}
+	if err := f.AddFile(dataprovider.FileInfo{Path: "new.txt", Size: 20, Mtime: 600, Atime: 300, Uid: 7}); err != nil {
+		t.Fatalf("AddFile new file returned error: %v", err)
+	}
+	if err := f.RebuildDirTable(1000, nil); err != nil {
+		t.Fatalf("RebuildDirTable returned error: %v", err)
+	}
+	f.Finalize()
+
+	p, err := dataprovidersqlite.InitDataProviderSqlite(dbFile)
+	if err != nil {
+		t.Fatalf("InitDataProviderSqlite returned error: %v", err)
+	}
+	defer p.Finalize()
+
+	info, err := p.DirInfo("computername", "E:")
+	if err != nil {
+		t.Fatalf("DirInfo returned error: %v", err)
+	}
+	if info == nil {
+		t.Fatal("DirInfo returned nil info")
+	}
+	if got, ok := info["acqTimeMin"]; !ok || got != int64(1000) {
+		t.Fatalf("acqTimeMin mismatch: got %#v want 1000", got)
+	}
+	if got, ok := info["acqTimeMax"]; !ok || got != int64(1000) {
+		t.Fatalf("acqTimeMax mismatch: got %#v want 1000", got)
+	}
+}
+
 func TestDirInfoSubdirSizesAreNotPaddedWithZeroes(t *testing.T) {
 	dbFile := filepath.Join(t.TempDir(), "db.sqlite")
 	f, err := datafillersqlite.InitDataFillerSqlite(dbFile)

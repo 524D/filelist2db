@@ -42,7 +42,8 @@ func InitDataProviderSqlite(dbFile string) (dataprovider.DataProvider, error) {
 		return nil, err
 	}
 	if d.stmtSelectDirSummary, err = db.Prepare(`SELECT mtime_size_1m, mtime_size_3m, mtime_size_1y, mtime_size_3y, mtime_size_5y, mtime_size_older,
-		atime_size_1m, atime_size_3m, atime_size_1y, atime_size_3y, atime_size_5y, atime_size_older
+		atime_size_1m, atime_size_3m, atime_size_1y, atime_size_3y, atime_size_5y, atime_size_older,
+		acqtime_min, acqtime_max
 		FROM dir WHERE path_id = ?`); err != nil {
 		return nil, err
 	}
@@ -209,11 +210,16 @@ func (d *DataProviderSqlite) DirInfo(source string, dir string) (map[string]any,
 
 	var mSizes = make([]uint64, 6)
 	var aSizes = make([]uint64, 6)
+	var acqTimeMin int64
+	var acqTimeMax int64
 	if err := d.stmtSelectDirSummary.QueryRow(pathID).Scan(&mSizes[0], &mSizes[1], &mSizes[2], &mSizes[3], &mSizes[4], &mSizes[5],
-		&aSizes[0], &aSizes[1], &aSizes[2], &aSizes[3], &aSizes[4], &aSizes[5]); err != nil {
+		&aSizes[0], &aSizes[1], &aSizes[2], &aSizes[3], &aSizes[4], &aSizes[5],
+		&acqTimeMin, &acqTimeMax); err != nil {
 		if err == sql.ErrNoRows {
 			mSizes = make([]uint64, 6)
 			aSizes = make([]uint64, 6)
+			acqTimeMin = 0
+			acqTimeMax = 0
 		} else {
 			return nil, err
 		}
@@ -252,6 +258,8 @@ func (d *DataProviderSqlite) DirInfo(source string, dir string) (map[string]any,
 	info := make(map[string]any)
 	info["mtimes"] = mSizes
 	info["atimes"] = aSizes
+	info["acqTimeMin"] = acqTimeMin
+	info["acqTimeMax"] = acqTimeMax
 	info["timeBins"] = timeBins
 	info["subDirs"] = subDirs
 	return info, nil
