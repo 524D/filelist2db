@@ -386,19 +386,19 @@ func TestAddFilePopulatesSimplePathTables(t *testing.T) {
 	}
 
 	var simpleElem string
-	if err := db.QueryRow(`SELECT simple_elem FROM simple_path_elem WHERE simple_elem = 'myreport'`).Scan(&simpleElem); err != nil {
+	if err := db.QueryRow(`SELECT simple_elem FROM simple_path_elem WHERE simple_elem = 'myreporttxt'`).Scan(&simpleElem); err != nil {
 		t.Fatalf("expected simplified file name mapping missing: %v", err)
 	}
-	if simpleElem != "myreport" {
-		t.Fatalf("simplified element mismatch: got %q want %q", simpleElem, "myreport")
+	if simpleElem != "myreporttxt" {
+		t.Fatalf("simplified element mismatch: got %q want %q", simpleElem, "myreporttxt")
 	}
 
 	var paired int
-	if err := db.QueryRow(`SELECT COUNT(*) FROM simple_path_translate WHERE simple_path_elem_id = (SELECT id FROM simple_path_elem WHERE simple_elem = 'myreport')`).Scan(&paired); err != nil {
+	if err := db.QueryRow(`SELECT COUNT(*) FROM simple_path_translate WHERE simple_path_elem_id = (SELECT id FROM simple_path_elem WHERE simple_elem = 'myreporttxt')`).Scan(&paired); err != nil {
 		t.Fatalf("translate lookup query returned error: %v", err)
 	}
 	if paired == 0 {
-		t.Fatalf("myreport should map to at least one path_elem row")
+		t.Fatalf("myreporttxt should map to at least one path_elem row")
 	}
 }
 
