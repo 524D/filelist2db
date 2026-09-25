@@ -266,10 +266,10 @@ func main() {
 	if args.cpuProfile != "" {
 		f, err := os.Create(args.cpuProfile)
 		if err != nil {
-			panic(err)
+			log.Fatal(err)
 		}
 		if err := pprof.StartCPUProfile(f); err != nil {
-			panic(err)
+			log.Fatal(err)
 		}
 		defer pprof.StopCPUProfile()
 	}
@@ -277,7 +277,7 @@ func main() {
 	// Create the write-side SQLite adapter used to import file metadata.
 	f, err := datafillersqlite.InitDataFillerSqlite(args.dbFile)
 	if err != nil {
-		panic(err)
+		log.Fatal(err)
 	}
 	defer f.Finalize()
 
@@ -285,7 +285,7 @@ func main() {
 	for _, fn := range files {
 		err = processListFile(f, fn)
 		if err != nil {
-			panic(err)
+			log.Fatal(err)
 		}
 	}
 
@@ -302,7 +302,7 @@ func main() {
 		}
 		err = f.RebuildDirTable(100000, progress)
 		if err != nil {
-			panic(err)
+			log.Fatal(err)
 		}
 	}
 	if args.buildBinTable {
@@ -318,7 +318,7 @@ func main() {
 		}
 		err = f.RebuildBinTable(100000, progress)
 		if err != nil {
-			panic(err)
+			log.Fatal(err)
 		}
 	}
 }
