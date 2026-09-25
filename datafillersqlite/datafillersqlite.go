@@ -360,10 +360,11 @@ func (d *DataFillerSqlite) Finalize() {
 		d.db.Close()
 	}
 }
+
+// Simplify a path element by removing leading zeros and converting to lowercase.
+// It keeps the file extension
 func simplifyPathElem(elem string) string {
 	elem = strings.TrimSpace(elem)
-	// TODO: remove TrimSuffix !!!
-	elem = strings.TrimSuffix(elem, path.Ext(elem))
 	elem = strings.TrimLeft(elem, "0")
 	elem = strings.Map(func(r rune) rune {
 		if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') {
