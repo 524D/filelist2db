@@ -234,6 +234,18 @@ func createTables(db *sql.DB) error {
 	if err != nil {
 		return err
 	}
+
+	_, err = db.Exec(`CREATE TABLE IF NOT EXISTS meta (
+		name TEXT PRIMARY KEY,
+		value INTEGER NOT NULL DEFAULT 0
+	)`)
+	if err != nil {
+		return err
+	}
+
+	if err != nil {
+		return err
+	}
 	_, err = db.Exec(`CREATE INDEX IF NOT EXISTS file_path_idx ON file (path_id)`)
 	if err != nil {
 		return err
@@ -679,6 +691,10 @@ func (d *DataFillerSqlite) AddFile(f dataprovider.FileInfo) error {
 func (d *DataFillerSqlite) RebuildDirTable(batchSize int, progress dataprovider.ProgressFunc) error {
 	if batchSize <= 0 {
 		batchSize = 1000
+	}
+	startedAt := time.Now().Unix()
+	if _, err := d.db.Exec(`INSERT INTO meta(name, value) VALUES ('genTime', ?) ON CONFLICT(name) DO UPDATE SET value = excluded.value`, startedAt); err != nil {
+		return err
 	}
 	now := time.Now().Unix()
 	var totalRows int64

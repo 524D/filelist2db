@@ -23,6 +23,7 @@ type DataProviderSqlite struct {
 	stmtSelectPathIDByElemAndParentPathID *sql.Stmt
 	stmtSelectRootSources                 *sql.Stmt
 	stmtSelectDirSummary                  *sql.Stmt
+	stmtSelectMeta                       *sql.Stmt
 }
 
 func InitDataProviderSqlite(dbFile string) (dataprovider.DataProvider, error) {
@@ -45,6 +46,9 @@ func InitDataProviderSqlite(dbFile string) (dataprovider.DataProvider, error) {
 		atime_size_1m, atime_size_3m, atime_size_1y, atime_size_3y, atime_size_5y, atime_size_older,
 		acqtime_min, acqtime_max
 		FROM dir WHERE path_id = ?`); err != nil {
+		return nil, err
+	}
+	if d.stmtSelectMeta, err = db.Prepare(`SELECT value FROM meta WHERE name = ?`); err != nil {
 		return nil, err
 	}
 	return &d, nil
@@ -75,6 +79,9 @@ func (d *DataProviderSqlite) Finalize() {
 	}
 	if d.stmtSelectDirSummary != nil {
 		d.stmtSelectDirSummary.Close()
+	}
+	if d.stmtSelectMeta != nil {
+		d.stmtSelectMeta.Close()
 	}
 	if d.db != nil {
 		d.db.Close()
@@ -255,11 +262,17 @@ func (d *DataProviderSqlite) DirInfo(source string, dir string) (map[string]any,
 		return nil, err
 	}
 
+	genTime := int64(0)
+	if err := d.stmtSelectMeta.QueryRow("genTime").Scan(&genTime); err != nil && err != sql.ErrNoRows {
+		return nil, err
+	}
+
 	info := make(map[string]any)
 	info["mtimes"] = mSizes
 	info["atimes"] = aSizes
 	info["acqTimeMin"] = acqTimeMin
 	info["acqTimeMax"] = acqTimeMax
+	info["genTime"] = genTime
 	info["timeBins"] = timeBins
 	info["subDirs"] = subDirs
 	return info, nil

@@ -101,6 +101,48 @@ func TestDirInfoIncludesAcquisitionTimeRange(t *testing.T) {
 	}
 }
 
+func TestDirInfoIncludesGenerationTime(t *testing.T) {
+	dbFile := filepath.Join(t.TempDir(), "db.sqlite")
+	f, err := datafillersqlite.InitDataFillerSqlite(dbFile)
+	if err != nil {
+		t.Fatalf("InitDataFillerSqlite returned error: %v", err)
+	}
+	if err := f.SetSourceInfo("computername", "E:", 1000); err != nil {
+		t.Fatalf("SetSourceInfo returned error: %v", err)
+	}
+	if err := f.AddFile(dataprovider.FileInfo{Path: "a.txt", Size: 10, Mtime: 500, Atime: 200, Uid: 7}); err != nil {
+		t.Fatalf("AddFile returned error: %v", err)
+	}
+	before := time.Now().Unix()
+	if err := f.RebuildDirTable(1000, nil); err != nil {
+		t.Fatalf("RebuildDirTable returned error: %v", err)
+	}
+	after := time.Now().Unix()
+	f.Finalize()
+
+	p, err := dataprovidersqlite.InitDataProviderSqlite(dbFile)
+	if err != nil {
+		t.Fatalf("InitDataProviderSqlite returned error: %v", err)
+	}
+	defer p.Finalize()
+
+	info, err := p.DirInfo("computername", "E:")
+	if err != nil {
+		t.Fatalf("DirInfo returned error: %v", err)
+	}
+	got, ok := info["genTime"]
+	if !ok {
+		t.Fatal("genTime missing from DirInfo metadata")
+	}
+	genTime, ok := got.(int64)
+	if !ok {
+		t.Fatalf("genTime wrong type: got %T want int64", got)
+	}
+	if genTime < before || genTime > after {
+		t.Fatalf("genTime out of range: got %d want between %d and %d", genTime, before, after)
+	}
+}
+
 func TestDirInfoSubdirSizesAreNotPaddedWithZeroes(t *testing.T) {
 	dbFile := filepath.Join(t.TempDir(), "db.sqlite")
 	f, err := datafillersqlite.InitDataFillerSqlite(dbFile)
