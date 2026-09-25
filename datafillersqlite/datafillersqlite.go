@@ -123,11 +123,9 @@ func InitDataFillerSqlite(dbFile string) (*DataFillerSqlite, error) {
 	if d.stmtSelectFileBatchForBins, err = db.Prepare(`SELECT size FROM file ORDER BY id LIMIT ? OFFSET ?`); err != nil {
 		return nil, err
 	}
-	if d.stmtInsertBin, err = db.Prepare(`INSERT INTO bin (bin_index, size_min, size_max, total_size, file_count)
-		VALUES (?, ?, ?, ?, ?)
+	if d.stmtInsertBin, err = db.Prepare(`INSERT INTO bin (bin_index, total_size, file_count)
+		VALUES (?, ?, ?)
 		ON CONFLICT(bin_index) DO UPDATE SET
-			size_min = MIN(bin.size_min, excluded.size_min),
-			size_max = MAX(bin.size_max, excluded.size_max),
 			total_size = bin.total_size + excluded.total_size,
 			file_count = bin.file_count + excluded.file_count`); err != nil {
 		return nil, err
@@ -250,15 +248,9 @@ func createTables(db *sql.DB) error {
 	}
 	_, err = db.Exec(`CREATE TABLE IF NOT EXISTS bin (
 		bin_index INTEGER PRIMARY KEY,
-		size_min INTEGER NOT NULL DEFAULT 0,
-		size_max INTEGER NOT NULL DEFAULT 0,
 		total_size INTEGER NOT NULL DEFAULT 0,
 		file_count INTEGER NOT NULL DEFAULT 0
 	)`)
-	if err != nil {
-		return err
-	}
-
 	if err != nil {
 		return err
 	}
@@ -887,7 +879,7 @@ func (d *DataFillerSqlite) RebuildBinTable(batchSize int, progress dataprovider.
 					binIndex = binCount - 1
 				}
 			}
-			if _, err := d.stmtInsertBin.Exec(binIndex, fileSize, fileSize, fileSize, 1); err != nil {
+			if _, err := d.stmtInsertBin.Exec(binIndex, fileSize, 1); err != nil {
 				rows.Close()
 				return err
 			}
