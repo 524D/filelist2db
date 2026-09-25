@@ -260,6 +260,8 @@ func processListFile(d datafiller.DataFiller, fn string) error {
 }
 
 func main() {
+	log.SetFlags(log.LstdFlags | log.Lshortfile)
+
 	// Parse command line arguments
 	files := parseCmdLine()
 
