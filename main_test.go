@@ -144,15 +144,9 @@ func TestInitDataProviderSqlitePreparesReadOnlyStatements(t *testing.T) {
 	v := reflect.ValueOf(p).Elem()
 	for _, name := range []string{
 		"stmtSelectPathElem",
-		"stmtSelectPath",
 		"stmtSelectPathIDByElemAndParentPathID",
-		"stmtSelectPathParentInfo",
 		"stmtSelectRootSources",
 		"stmtSelectDirSummary",
-		"stmtSelectSubDirs",
-		"stmtSelectDirTotalSize",
-		"stmtCountFiles",
-		"stmtSelectFileBatch",
 	} {
 		field := v.FieldByName(name)
 		if !field.IsValid() {
@@ -562,5 +556,69 @@ func TestRebuildDirTableAggregatesPerBatch(t *testing.T) {
 	}
 	if totalSize != 60 {
 		t.Fatalf("folder total_size mismatch: got %d want %d", totalSize, 60)
+	}
+}
+
+func TestRebuildDirTableStoresAcquisitionTimeRange(t *testing.T) {
+	dbFile := filepath.Join(t.TempDir(), "db.sqlite")
+	filler, err := datafillersqlite.InitDataFillerSqlite(dbFile)
+	if err != nil {
+		t.Fatalf("InitDataFillerSqlite returned error: %v", err)
+	}
+	if err := filler.SetSourceInfo("computername1", "E:", 1000); err != nil {
+		t.Fatalf("SetSourceInfo first source returned error: %v", err)
+	}
+	if err := filler.AddFile(dataprovider.FileInfo{Path: "folder/old.txt", Size: 10, Mtime: 500, Atime: 200, Uid: 1}); err != nil {
+		t.Fatalf("AddFile old file returned error: %v", err)
+	}
+	if err := filler.SetSourceInfo("computername2", "F:", 2000); err != nil {
+		t.Fatalf("SetSourceInfo second source returned error: %v", err)
+	}
+	if err := filler.AddFile(dataprovider.FileInfo{Path: "folder/new.txt", Size: 20, Mtime: 600, Atime: 300, Uid: 1}); err != nil {
+		t.Fatalf("AddFile new file returned error: %v", err)
+	}
+	if err := filler.RebuildDirTable(2, nil); err != nil {
+		t.Fatalf("RebuildDirTable returned error: %v", err)
+	}
+	filler.Finalize()
+
+	db, err := sql.Open("sqlite", dbFile)
+	if err != nil {
+		t.Fatalf("sql.Open returned error: %v", err)
+	}
+	defer db.Close()
+
+	rows, err := db.Query(`
+		SELECT d.acqtime_min, d.acqtime_max
+		FROM dir d
+		JOIN path p ON p.id = d.path_id
+		JOIN path_elem pe ON pe.id = p.path_elem_id
+		WHERE pe.elem = 'folder' AND p.node_type != 0
+		ORDER BY d.acqtime_min
+	`)
+	if err != nil {
+		t.Fatalf("query dir acquisition ranges returned error: %v", err)
+	}
+	defer rows.Close()
+
+	var seen []struct{ min, max int64 }
+	for rows.Next() {
+		var minAcq, maxAcq int64
+		if err := rows.Scan(&minAcq, &maxAcq); err != nil {
+			t.Fatalf("scan dir acquisition range returned error: %v", err)
+		}
+		seen = append(seen, struct{ min, max int64 }{min: minAcq, max: maxAcq})
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatalf("row iteration error: %v", err)
+	}
+	if len(seen) != 2 {
+		t.Fatalf("expected 2 folder rows, got %d: %#v", len(seen), seen)
+	}
+	if seen[0].min != 1000 || seen[0].max != 1000 {
+		t.Fatalf("first folder acquisition range mismatch: got min=%d max=%d want min=1000 max=1000", seen[0].min, seen[0].max)
+	}
+	if seen[1].min != 2000 || seen[1].max != 2000 {
+		t.Fatalf("second folder acquisition range mismatch: got min=%d max=%d want min=2000 max=2000", seen[1].min, seen[1].max)
 	}
 }

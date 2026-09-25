@@ -20,16 +20,9 @@ type DataProviderSqlite struct {
 	ancestorDirIDCachePos map[int64]int
 	// Prepared statements required for read-only queries.
 	stmtSelectPathElem                    *sql.Stmt
-	stmtSelectPath                        *sql.Stmt
 	stmtSelectPathIDByElemAndParentPathID *sql.Stmt
-	stmtSelectPathParentInfo              *sql.Stmt
 	stmtSelectRootSources                 *sql.Stmt
 	stmtSelectDirSummary                  *sql.Stmt
-	stmtSelectSubDirs                     *sql.Stmt
-	stmtSelectDirTotalSize                *sql.Stmt
-	stmtCountFiles                        *sql.Stmt
-	stmtDeleteDir                         *sql.Stmt
-	stmtSelectFileBatch                   *sql.Stmt
 }
 
 func InitDataProviderSqlite(dbFile string) (dataprovider.DataProvider, error) {
@@ -42,13 +35,7 @@ func InitDataProviderSqlite(dbFile string) (dataprovider.DataProvider, error) {
 	if d.stmtSelectPathElem, err = db.Prepare(`SELECT id FROM path_elem WHERE elem = ?`); err != nil {
 		return nil, err
 	}
-	if d.stmtSelectPath, err = db.Prepare(`SELECT id FROM path WHERE path_elem_id = ? AND parent_id = ? AND node_type = ?`); err != nil {
-		return nil, err
-	}
 	if d.stmtSelectPathIDByElemAndParentPathID, err = db.Prepare(`SELECT id FROM path WHERE path_elem_id = ? AND parent_id = ?`); err != nil {
-		return nil, err
-	}
-	if d.stmtSelectPathParentInfo, err = db.Prepare(`SELECT parent_id, node_type FROM path WHERE id = ?`); err != nil {
 		return nil, err
 	}
 	if d.stmtSelectRootSources, err = db.Prepare(`SELECT pe.elem FROM path p JOIN path_elem pe ON pe.id = p.path_elem_id WHERE p.parent_id = -1 ORDER BY pe.elem`); err != nil {
@@ -57,24 +44,6 @@ func InitDataProviderSqlite(dbFile string) (dataprovider.DataProvider, error) {
 	if d.stmtSelectDirSummary, err = db.Prepare(`SELECT mtime_size_1m, mtime_size_3m, mtime_size_1y, mtime_size_3y, mtime_size_5y, mtime_size_older,
 		atime_size_1m, atime_size_3m, atime_size_1y, atime_size_3y, atime_size_5y, atime_size_older
 		FROM dir WHERE path_id = ?`); err != nil {
-		return nil, err
-	}
-	if d.stmtSelectSubDirs, err = db.Prepare(`SELECT pe.elem FROM path p JOIN path_elem pe ON pe.id = p.path_elem_id WHERE p.parent_id = ? AND p.node_type != 0 ORDER BY pe.elem`); err != nil {
-		return nil, err
-	}
-	if d.stmtSelectDirTotalSize, err = db.Prepare(`SELECT total_size FROM dir WHERE path_id = ?`); err != nil {
-		return nil, err
-	}
-	if d.stmtCountFiles, err = db.Prepare(`SELECT COUNT(*) FROM file`); err != nil {
-		return nil, err
-	}
-	if d.stmtDeleteDir, err = db.Prepare(`DELETE FROM dir`); err != nil {
-		return nil, err
-	}
-	if d.stmtSelectFileBatch, err = db.Prepare(`SELECT f.path_id, p.parent_id, f.size, f.mtime, f.atime
-		FROM file f
-		JOIN path p ON p.id = f.path_id
-		ORDER BY f.id LIMIT ? OFFSET ?`); err != nil {
 		return nil, err
 	}
 	return &d, nil
@@ -97,35 +66,14 @@ func (d *DataProviderSqlite) Finalize() {
 	if d.stmtSelectPathElem != nil {
 		d.stmtSelectPathElem.Close()
 	}
-	if d.stmtSelectPath != nil {
-		d.stmtSelectPath.Close()
-	}
 	if d.stmtSelectPathIDByElemAndParentPathID != nil {
 		d.stmtSelectPathIDByElemAndParentPathID.Close()
-	}
-	if d.stmtSelectPathParentInfo != nil {
-		d.stmtSelectPathParentInfo.Close()
 	}
 	if d.stmtSelectRootSources != nil {
 		d.stmtSelectRootSources.Close()
 	}
 	if d.stmtSelectDirSummary != nil {
 		d.stmtSelectDirSummary.Close()
-	}
-	if d.stmtSelectSubDirs != nil {
-		d.stmtSelectSubDirs.Close()
-	}
-	if d.stmtSelectDirTotalSize != nil {
-		d.stmtSelectDirTotalSize.Close()
-	}
-	if d.stmtCountFiles != nil {
-		d.stmtCountFiles.Close()
-	}
-	if d.stmtDeleteDir != nil {
-		d.stmtDeleteDir.Close()
-	}
-	if d.stmtSelectFileBatch != nil {
-		d.stmtSelectFileBatch.Close()
 	}
 	if d.db != nil {
 		d.db.Close()
