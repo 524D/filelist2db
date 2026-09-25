@@ -25,6 +25,7 @@ import (
 type Args struct {
 	dbFile          string
 	buildDirSummary bool
+	buildBinTable   bool
 	cpuProfile      string
 }
 
@@ -57,12 +58,17 @@ func parseCmdLine() []string {
 
 	flag.StringVar(&args.dbFile, "db", "db.sqlite", "name of sqlite database to use")
 	flag.BoolVar(&args.buildDirSummary, "build-dir-summary", true, "rebuild the dir summary table from file2 after processing input files")
+	flag.BoolVar(&args.buildBinTable, "build-bin-table", false, "rebuild the file-size bin table after processing input files")
 	flag.StringVar(&args.cpuProfile, "cpuprofile", "", "write a CPU profile to this file; visualize with: go tool pprof -http=:8080 <profile-file>")
 	flag.Parse()
 
 	files := flag.Args()
+	if len(files) > 0 {
+		args.buildDirSummary = true
+		args.buildBinTable = true
+	}
 	// If no files are provided, only allow a summary-only run when enabled.
-	if len(files) == 0 && !args.buildDirSummary {
+	if len(files) == 0 && !args.buildDirSummary && !args.buildBinTable {
 		flag.Usage()
 	}
 
@@ -295,6 +301,22 @@ func main() {
 			bar.Set64(pct)
 		}
 		err = f.RebuildDirTable(100000, progress)
+		if err != nil {
+			panic(err)
+		}
+	}
+	if args.buildBinTable {
+		fmt.Println()
+		bar := progressbar.NewOptions(100, progressbar.OptionSetDescription("Rebuilding file-size bins"))
+		bar.Set64(0)
+		progress := func(current, total int64) {
+			if total <= 0 {
+				return
+			}
+			pct := current * 100 / total
+			bar.Set64(pct)
+		}
+		err = f.RebuildBinTable(100000, progress)
 		if err != nil {
 			panic(err)
 		}

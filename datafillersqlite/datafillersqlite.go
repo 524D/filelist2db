@@ -45,6 +45,10 @@ type DataFillerSqlite struct {
 	stmtCountFiles                *sql.Stmt
 	stmtDeleteDir                 *sql.Stmt
 	stmtSelectFileBatch           *sql.Stmt
+	stmtSelectMaxFileSize         *sql.Stmt
+	stmtDeleteBin                 *sql.Stmt
+	stmtSelectFileBatchForBins    *sql.Stmt
+	stmtInsertBin                 *sql.Stmt
 	stmtBeginTransaction          *sql.Stmt
 	stmtCommitTransaction         *sql.Stmt
 }
@@ -110,6 +114,24 @@ func InitDataFillerSqlite(dbFile string) (*DataFillerSqlite, error) {
 		ORDER BY f.id LIMIT ? OFFSET ?`); err != nil {
 		return nil, err
 	}
+	if d.stmtSelectMaxFileSize, err = db.Prepare(`SELECT MAX(size) FROM file`); err != nil {
+		return nil, err
+	}
+	if d.stmtDeleteBin, err = db.Prepare(`DELETE FROM bin`); err != nil {
+		return nil, err
+	}
+	if d.stmtSelectFileBatchForBins, err = db.Prepare(`SELECT size FROM file ORDER BY id LIMIT ? OFFSET ?`); err != nil {
+		return nil, err
+	}
+	if d.stmtInsertBin, err = db.Prepare(`INSERT INTO bin (bin_index, size_min, size_max, total_size, file_count)
+		VALUES (?, ?, ?, ?, ?)
+		ON CONFLICT(bin_index) DO UPDATE SET
+			size_min = MIN(bin.size_min, excluded.size_min),
+			size_max = MAX(bin.size_max, excluded.size_max),
+			total_size = bin.total_size + excluded.total_size,
+			file_count = bin.file_count + excluded.file_count`); err != nil {
+		return nil, err
+	}
 	if d.stmtBeginTransaction, err = db.Prepare(`BEGIN TRANSACTION`); err != nil {
 		return nil, err
 	}
@@ -173,6 +195,11 @@ func createTables(db *sql.DB) error {
 		return err
 	}
 
+	_, err = db.Exec(`CREATE INDEX IF NOT EXISTS file_size_idx ON file (size)`)
+	if err != nil {
+		return err
+	}
+
 	_, err = db.Exec(`CREATE TABLE IF NOT EXISTS simple_path_elem (
 		id INTEGER PRIMARY KEY,
 		simple_elem TEXT UNIQUE NOT NULL
@@ -218,6 +245,20 @@ func createTables(db *sql.DB) error {
 		atime_size_5y INTEGER NOT NULL DEFAULT 0,
 		atime_size_older INTEGER NOT NULL DEFAULT 0
 	)`)
+	if err != nil {
+		return err
+	}
+	_, err = db.Exec(`CREATE TABLE IF NOT EXISTS bin (
+		bin_index INTEGER PRIMARY KEY,
+		size_min INTEGER NOT NULL DEFAULT 0,
+		size_max INTEGER NOT NULL DEFAULT 0,
+		total_size INTEGER NOT NULL DEFAULT 0,
+		file_count INTEGER NOT NULL DEFAULT 0
+	)`)
+	if err != nil {
+		return err
+	}
+
 	if err != nil {
 		return err
 	}
@@ -304,6 +345,18 @@ func (d *DataFillerSqlite) Finalize() {
 	}
 	if d.stmtSelectFileBatch != nil {
 		d.stmtSelectFileBatch.Close()
+	}
+	if d.stmtSelectMaxFileSize != nil {
+		d.stmtSelectMaxFileSize.Close()
+	}
+	if d.stmtDeleteBin != nil {
+		d.stmtDeleteBin.Close()
+	}
+	if d.stmtSelectFileBatchForBins != nil {
+		d.stmtSelectFileBatchForBins.Close()
+	}
+	if d.stmtInsertBin != nil {
+		d.stmtInsertBin.Close()
 	}
 	if d.stmtBeginTransaction != nil {
 		d.stmtBeginTransaction.Close()
@@ -777,6 +830,79 @@ func (d *DataFillerSqlite) RebuildDirTable(batchSize int, progress dataprovider.
 	}
 	if err := d.flushDirSummaryBatch(stats); err != nil {
 		return err
+	}
+	if progress != nil {
+		progress(totalRows, totalRows)
+	}
+	return nil
+}
+
+func (d *DataFillerSqlite) RebuildBinTable(batchSize int, progress dataprovider.ProgressFunc) error {
+	if batchSize <= 0 {
+		batchSize = 1000
+	}
+	var maxSize int64
+	if err := d.stmtSelectMaxFileSize.QueryRow().Scan(&maxSize); err != nil {
+		return err
+	}
+	if _, err := d.stmtDeleteBin.Exec(); err != nil {
+		return err
+	}
+	if maxSize <= 0 {
+		if progress != nil {
+			progress(0, 0)
+		}
+		return nil
+	}
+
+	var totalRows int64
+	if err := d.stmtCountFiles.QueryRow().Scan(&totalRows); err != nil {
+		return err
+	}
+	if totalRows == 0 {
+		if progress != nil {
+			progress(0, 0)
+		}
+		return nil
+	}
+
+	const binCount = 1000
+	for offset := 0; ; offset += batchSize {
+		rows, err := d.stmtSelectFileBatchForBins.Query(batchSize, offset)
+		if err != nil {
+			return err
+		}
+		processed := false
+		for rows.Next() {
+			processed = true
+			var fileSize int64
+			if err := rows.Scan(&fileSize); err != nil {
+				rows.Close()
+				return err
+			}
+			binIndex := 0
+			if maxSize > 0 {
+				binIndex = int((float64(fileSize) / float64(maxSize)) * float64(binCount))
+				if binIndex >= binCount {
+					binIndex = binCount - 1
+				}
+			}
+			if _, err := d.stmtInsertBin.Exec(binIndex, fileSize, fileSize, fileSize, 1); err != nil {
+				rows.Close()
+				return err
+			}
+		}
+		if err := rows.Err(); err != nil {
+			rows.Close()
+			return err
+		}
+		rows.Close()
+		if !processed {
+			break
+		}
+		if progress != nil {
+			progress(int64(offset+batchSize), totalRows)
+		}
 	}
 	if progress != nil {
 		progress(totalRows, totalRows)
