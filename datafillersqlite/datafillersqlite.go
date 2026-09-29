@@ -2,6 +2,7 @@ package datafillersqlite
 
 import (
 	"database/sql"
+	"math"
 	"path"
 	"path/filepath"
 	"slices"
@@ -123,8 +124,8 @@ func InitDataFillerSqlite(dbFile string) (*DataFillerSqlite, error) {
 	if d.stmtSelectFileBatchForBins, err = db.Prepare(`SELECT size FROM file ORDER BY id LIMIT ? OFFSET ?`); err != nil {
 		return nil, err
 	}
-	if d.stmtInsertBin, err = db.Prepare(`INSERT INTO bin (bin_index, total_size, file_count)
-		VALUES (?, ?, ?)
+	if d.stmtInsertBin, err = db.Prepare(`INSERT INTO bin (bin_index, total_size, file_count, start_size, end_size)
+		VALUES (?, ?, ?, ?, ?)
 		ON CONFLICT(bin_index) DO UPDATE SET
 			total_size = bin.total_size + excluded.total_size,
 			file_count = bin.file_count + excluded.file_count`); err != nil {
@@ -249,7 +250,9 @@ func createTables(db *sql.DB) error {
 	_, err = db.Exec(`CREATE TABLE IF NOT EXISTS bin (
 		bin_index INTEGER PRIMARY KEY,
 		total_size INTEGER NOT NULL DEFAULT 0,
-		file_count INTEGER NOT NULL DEFAULT 0
+		file_count INTEGER NOT NULL DEFAULT 0,
+		start_size INTEGER NOT NULL DEFAULT 0,
+		end_size INTEGER NOT NULL DEFAULT 0
 	)`)
 	if err != nil {
 		return err
@@ -738,11 +741,10 @@ func (d *DataFillerSqlite) RebuildDirTable(batchSize int, progress dataprovider.
 	if batchSize <= 0 {
 		batchSize = 1000
 	}
-	startedAt := time.Now().Unix()
-	if _, err := d.db.Exec(`INSERT INTO meta(name, value) VALUES ('genTime', ?) ON CONFLICT(name) DO UPDATE SET value = excluded.value`, startedAt); err != nil {
+	now := time.Now().Unix()
+	if _, err := d.db.Exec(`INSERT INTO meta(name, value) VALUES ('genTime', ?) ON CONFLICT(name) DO UPDATE SET value = excluded.value`, now); err != nil {
 		return err
 	}
-	now := time.Now().Unix()
 	var totalRows int64
 	if err := d.stmtCountFiles.QueryRow().Scan(&totalRows); err != nil {
 		return err
@@ -834,18 +836,9 @@ func (d *DataFillerSqlite) RebuildBinTable(batchSize int, progress dataprovider.
 	if batchSize <= 0 {
 		batchSize = 1000
 	}
-	var maxSize int64
-	if err := d.stmtSelectMaxFileSize.QueryRow().Scan(&maxSize); err != nil {
-		return err
-	}
+	const maxBinSize int64 = 10 * 1024 * 1024 * 1024 * 1024
 	if _, err := d.stmtDeleteBin.Exec(); err != nil {
 		return err
-	}
-	if maxSize <= 0 {
-		if progress != nil {
-			progress(0, 0)
-		}
-		return nil
 	}
 
 	var totalRows int64
@@ -859,7 +852,11 @@ func (d *DataFillerSqlite) RebuildBinTable(batchSize int, progress dataprovider.
 		return nil
 	}
 
-	const binCount = 1000
+	const binCount = 100
+	binTotals := make([]struct {
+		totalSize int64
+		fileCount int64
+	}, binCount)
 	for offset := 0; ; offset += batchSize {
 		rows, err := d.stmtSelectFileBatchForBins.Query(batchSize, offset)
 		if err != nil {
@@ -874,16 +871,18 @@ func (d *DataFillerSqlite) RebuildBinTable(batchSize int, progress dataprovider.
 				return err
 			}
 			binIndex := 0
-			if maxSize > 0 {
-				binIndex = int((float64(fileSize) / float64(maxSize)) * float64(binCount))
+			if fileSize > 0 {
+				logValue := math.Log(float64(fileSize)) / math.Log(float64(maxBinSize))
+				binIndex = int(logValue * float64(binCount-1))
+				if binIndex < 0 {
+					binIndex = 0
+				}
 				if binIndex >= binCount {
 					binIndex = binCount - 1
 				}
 			}
-			if _, err := d.stmtInsertBin.Exec(binIndex, fileSize, 1); err != nil {
-				rows.Close()
-				return err
-			}
+			binTotals[binIndex].totalSize += fileSize
+			binTotals[binIndex].fileCount++
 		}
 		if err := rows.Err(); err != nil {
 			rows.Close()
@@ -895,6 +894,22 @@ func (d *DataFillerSqlite) RebuildBinTable(batchSize int, progress dataprovider.
 		}
 		if progress != nil {
 			progress(int64(offset+batchSize), totalRows)
+		}
+	}
+
+	for i, total := range binTotals {
+		// Bin boundaries are the inverse of the binIndex formula above (maxBinSize^(i/(binCount-1))),
+		// so no extra multiplication by maxBinSize is needed here.
+		startSize := int64(0)
+		if i > 0 {
+			startSize = int64(math.Exp(float64(i) / float64(binCount-1) * math.Log(float64(maxBinSize))))
+		}
+		endSize := maxBinSize
+		if i < binCount-1 {
+			endSize = int64(math.Exp(float64(i+1) / float64(binCount-1) * math.Log(float64(maxBinSize))))
+		}
+		if _, err := d.stmtInsertBin.Exec(i, total.totalSize, total.fileCount, startSize, endSize); err != nil {
+			return err
 		}
 	}
 	if progress != nil {

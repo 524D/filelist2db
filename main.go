@@ -58,15 +58,12 @@ func parseCmdLine() []string {
 
 	flag.StringVar(&args.dbFile, "db", "db.sqlite", "name of sqlite database to use")
 	flag.BoolVar(&args.buildDirSummary, "build-dir-summary", true, "rebuild the dir summary table from file2 after processing input files")
-	flag.BoolVar(&args.buildBinTable, "build-bin-table", false, "rebuild the file-size bin table after processing input files")
+	flag.BoolVar(&args.buildBinTable, "build-bin-table", true, "rebuild the file-size bin table after processing input files")
 	flag.StringVar(&args.cpuProfile, "cpuprofile", "", "write a CPU profile to this file; visualize with: go tool pprof -http=:8080 <profile-file>")
 	flag.Parse()
 
 	files := flag.Args()
-	if len(files) > 0 {
-		args.buildDirSummary = true
-		args.buildBinTable = true
-	}
+
 	// If no files are provided, only allow a summary-only run when enabled.
 	if len(files) == 0 && !args.buildDirSummary && !args.buildBinTable {
 		flag.Usage()
