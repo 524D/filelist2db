@@ -2,7 +2,7 @@ package datafillersqlite
 
 import (
 	"database/sql"
-	"math"
+	"math/bits"
 	"path"
 	"path/filepath"
 	"slices"
@@ -127,8 +127,8 @@ func InitDataFillerSqlite(dbFile string) (*DataFillerSqlite, error) {
 		ORDER BY f.id LIMIT ? OFFSET ?`); err != nil {
 		return nil, err
 	}
-	if d.stmtInsertBin, err = db.Prepare(`INSERT INTO bin (dir_level, dir_path_id, bin_index, total_size, file_count, start_size, end_size)
-		VALUES (?, ?, ?, ?, ?, ?, ?)
+	if d.stmtInsertBin, err = db.Prepare(`INSERT INTO bin (dir_level, dir_path_id, bin_index, total_size, file_count)
+		VALUES (?, ?, ?, ?, ?)
 		ON CONFLICT(dir_level, dir_path_id, bin_index) DO UPDATE SET
 			total_size = bin.total_size + excluded.total_size,
 			file_count = bin.file_count + excluded.file_count`); err != nil {
@@ -256,8 +256,6 @@ func createTables(db *sql.DB) error {
 		bin_index INTEGER NOT NULL DEFAULT 0,
 		total_size INTEGER NOT NULL DEFAULT 0,
 		file_count INTEGER NOT NULL DEFAULT 0,
-		start_size INTEGER NOT NULL DEFAULT 0,
-		end_size INTEGER NOT NULL DEFAULT 0,
 		PRIMARY KEY (dir_level, dir_path_id, bin_index)
 	)`)
 	if err != nil {
@@ -853,7 +851,6 @@ func (d *DataFillerSqlite) RebuildBinTable(batchSize int, progress dataprovider.
 	if batchSize <= 0 {
 		batchSize = 1000
 	}
-	const maxBinSize int64 = 10 * 1024 * 1024 * 1024 * 1024
 	const binCount = 100
 	if _, err := d.stmtDeleteBin.Exec(); err != nil {
 		return err
@@ -897,16 +894,11 @@ func (d *DataFillerSqlite) RebuildBinTable(batchSize int, progress dataprovider.
 				rows.Close()
 				return err
 			}
-			binIndex := 0
-			if fileSize > 0 {
-				logValue := math.Log(float64(fileSize)) / math.Log(float64(maxBinSize))
-				binIndex = int(logValue * float64(binCount-1))
-				if binIndex < 0 {
-					binIndex = 0
-				}
-				if binIndex >= binCount {
-					binIndex = binCount - 1
-				}
+			// bits.Len64 of a size gives floor(log2(size))+1 for size>=1, and 0 for size==0,
+			// which is exactly the bin index scheme: bin 0 is size 0, bin i is [2^(i-1), 2^i).
+			binIndex := bits.Len64(uint64(fileSize))
+			if binIndex >= binCount {
+				binIndex = binCount - 1
 			}
 			dirs, err := d.ancestorDirIDs(parentID)
 			if err != nil {
@@ -950,17 +942,7 @@ func (d *DataFillerSqlite) RebuildBinTable(batchSize int, progress dataprovider.
 	defer stmt.Close()
 	for key, totals := range groupTotals {
 		for i, total := range totals {
-			// Bin boundaries are the inverse of the binIndex formula above (maxBinSize^(i/(binCount-1))),
-			// so no extra multiplication by maxBinSize is needed here.
-			startSize := int64(0)
-			if i > 0 {
-				startSize = int64(math.Exp(float64(i) / float64(binCount-1) * math.Log(float64(maxBinSize))))
-			}
-			endSize := maxBinSize
-			if i < binCount-1 {
-				endSize = int64(math.Exp(float64(i+1) / float64(binCount-1) * math.Log(float64(maxBinSize))))
-			}
-			if _, err := stmt.Exec(key.level, key.dirID, i, total.totalSize, total.fileCount, startSize, endSize); err != nil {
+			if _, err := stmt.Exec(key.level, key.dirID, i, total.totalSize, total.fileCount); err != nil {
 				return err
 			}
 		}
