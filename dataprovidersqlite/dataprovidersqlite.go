@@ -23,7 +23,8 @@ type DataProviderSqlite struct {
 	stmtSelectPathIDByElemAndParentPathID *sql.Stmt
 	stmtSelectRootSources                 *sql.Stmt
 	stmtSelectDirSummary                  *sql.Stmt
-	stmtSelectMeta                       *sql.Stmt
+	stmtSelectMeta                        *sql.Stmt
+	stmtSelectBinSizes                    *sql.Stmt
 }
 
 func InitDataProviderSqlite(dbFile string) (dataprovider.DataProvider, error) {
@@ -49,6 +50,9 @@ func InitDataProviderSqlite(dbFile string) (dataprovider.DataProvider, error) {
 		return nil, err
 	}
 	if d.stmtSelectMeta, err = db.Prepare(`SELECT value FROM meta WHERE name = ?`); err != nil {
+		return nil, err
+	}
+	if d.stmtSelectBinSizes, err = db.Prepare(`SELECT bin_index, total_size, file_count FROM bin WHERE dir_path_id = ? ORDER BY bin_index`); err != nil {
 		return nil, err
 	}
 	return &d, nil
@@ -83,6 +87,9 @@ func (d *DataProviderSqlite) Finalize() {
 	if d.stmtSelectMeta != nil {
 		d.stmtSelectMeta.Close()
 	}
+	if d.stmtSelectBinSizes != nil {
+		d.stmtSelectBinSizes.Close()
+	}
 	if d.db != nil {
 		d.db.Close()
 	}
@@ -102,41 +109,6 @@ func simplifyPathElem(elem string) string {
 		return -1
 	}, elem)
 	return strings.ToLower(elem)
-}
-
-func (d *DataProviderSqlite) sourceRootElems() []string {
-	elems := make([]string, 0, 8)
-	if d.dataSource != "" {
-		elems = append(elems, d.dataSource)
-	}
-	if d.basePath == "" {
-		return elems
-	}
-	base := strings.ReplaceAll(d.basePath, "\\", "/")
-	base = strings.Trim(base, "/")
-	if base == "" {
-		return elems
-	}
-	if len(base) >= 2 && base[1] == ':' {
-		elems = append(elems, base[:2])
-		base = strings.TrimPrefix(base[2:], "/")
-	} else if d.dataSource == "" && strings.Contains(base, "/") {
-		parts := strings.Split(base, "/")
-		root := strings.Join(parts[:2], "/")
-		if root != "" {
-			elems = append(elems, root)
-			base = strings.TrimPrefix(strings.TrimPrefix(base, root), "/")
-		}
-	}
-	if base == "" {
-		return elems
-	}
-	for _, part := range strings.Split(base, "/") {
-		if part != "" && part != "." {
-			elems = append(elems, part)
-		}
-	}
-	return elems
 }
 
 // Database design
@@ -267,6 +239,26 @@ func (d *DataProviderSqlite) DirInfo(source string, dir string) (map[string]any,
 		return nil, err
 	}
 
+	binRows, err := d.stmtSelectBinSizes.Query(pathID)
+	if err != nil {
+		return nil, err
+	}
+	defer binRows.Close()
+
+	sizeBins := make([]SizeBin, 0)
+	for binRows.Next() {
+		var binIndex int
+		var totalSize int64
+		var fileCount int64
+		if err := binRows.Scan(&binIndex, &totalSize, &fileCount); err != nil {
+			return nil, err
+		}
+		sizeBins = append(sizeBins, SizeBin{BinIndex: binIndex, TotalSize: uint64(totalSize), FileCount: fileCount})
+	}
+	if err := binRows.Err(); err != nil {
+		return nil, err
+	}
+
 	info := make(map[string]any)
 	info["mtimes"] = mSizes
 	info["atimes"] = aSizes
@@ -275,7 +267,19 @@ func (d *DataProviderSqlite) DirInfo(source string, dir string) (map[string]any,
 	info["genTime"] = genTime
 	info["timeBins"] = timeBins
 	info["subDirs"] = subDirs
+	// Binned size info is only available for the outermost few directory levels,
+	// so only include it when data was actually found.
+	if len(sizeBins) > 0 {
+		info["sizeBins"] = sizeBins
+	}
 	return info, nil
+}
+
+// SizeBin holds the aggregated file count and total size for one power-of-two size bucket.
+type SizeBin struct {
+	BinIndex  int
+	TotalSize uint64
+	FileCount int64
 }
 
 var timeBins = []dataprovider.TimeBin{
