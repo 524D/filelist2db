@@ -121,12 +121,15 @@ func InitDataFillerSqlite(dbFile string) (*DataFillerSqlite, error) {
 	if d.stmtDeleteBin, err = db.Prepare(`DELETE FROM bin`); err != nil {
 		return nil, err
 	}
-	if d.stmtSelectFileBatchForBins, err = db.Prepare(`SELECT size FROM file ORDER BY id LIMIT ? OFFSET ?`); err != nil {
+	if d.stmtSelectFileBatchForBins, err = db.Prepare(`SELECT f.path_id, p.parent_id, f.size
+		FROM file f
+		JOIN path p ON p.id = f.path_id
+		ORDER BY f.id LIMIT ? OFFSET ?`); err != nil {
 		return nil, err
 	}
-	if d.stmtInsertBin, err = db.Prepare(`INSERT INTO bin (bin_index, total_size, file_count, start_size, end_size)
-		VALUES (?, ?, ?, ?, ?)
-		ON CONFLICT(bin_index) DO UPDATE SET
+	if d.stmtInsertBin, err = db.Prepare(`INSERT INTO bin (dir_level, dir_path_id, bin_index, total_size, file_count, start_size, end_size)
+		VALUES (?, ?, ?, ?, ?, ?, ?)
+		ON CONFLICT(dir_level, dir_path_id, bin_index) DO UPDATE SET
 			total_size = bin.total_size + excluded.total_size,
 			file_count = bin.file_count + excluded.file_count`); err != nil {
 		return nil, err
@@ -248,11 +251,14 @@ func createTables(db *sql.DB) error {
 		return err
 	}
 	_, err = db.Exec(`CREATE TABLE IF NOT EXISTS bin (
-		bin_index INTEGER PRIMARY KEY,
+		dir_level INTEGER NOT NULL DEFAULT 0,
+		dir_path_id INTEGER NOT NULL DEFAULT 0,
+		bin_index INTEGER NOT NULL DEFAULT 0,
 		total_size INTEGER NOT NULL DEFAULT 0,
 		file_count INTEGER NOT NULL DEFAULT 0,
 		start_size INTEGER NOT NULL DEFAULT 0,
-		end_size INTEGER NOT NULL DEFAULT 0
+		end_size INTEGER NOT NULL DEFAULT 0,
+		PRIMARY KEY (dir_level, dir_path_id, bin_index)
 	)`)
 	if err != nil {
 		return err
@@ -829,11 +835,26 @@ func (d *DataFillerSqlite) RebuildDirTable(batchSize int, progress dataprovider.
 	return nil
 }
 
+// binDirLevels is the number of top directory levels for which size histograms are
+// kept separately (level 1 is the outermost directory below the data source root).
+const binDirLevels = 3
+
+type binGroupKey struct {
+	level int
+	dirID int64
+}
+
+type binTotal struct {
+	totalSize int64
+	fileCount int64
+}
+
 func (d *DataFillerSqlite) RebuildBinTable(batchSize int, progress dataprovider.ProgressFunc) error {
 	if batchSize <= 0 {
 		batchSize = 1000
 	}
 	const maxBinSize int64 = 10 * 1024 * 1024 * 1024 * 1024
+	const binCount = 100
 	if _, err := d.stmtDeleteBin.Exec(); err != nil {
 		return err
 	}
@@ -849,11 +870,17 @@ func (d *DataFillerSqlite) RebuildBinTable(batchSize int, progress dataprovider.
 		return nil
 	}
 
-	const binCount = 100
-	binTotals := make([]struct {
-		totalSize int64
-		fileCount int64
-	}, binCount)
+	// Reset the ancestor-directory cache so it doesn't carry over stale state from a
+	// previous rebuild pass.
+	d.ancestorDirIDsCache = nil
+	d.ancestorDirIDCachePos = nil
+	d.prevAncestorDirs = nil
+
+	// Keep every group's histogram fully in memory until processing is complete, then
+	// write it out in a single pass, so that partially aggregated data never needs to
+	// be re-read and merged from the database.
+	groupTotals := make(map[binGroupKey]*[binCount]binTotal)
+	processedTotal := int64(0)
 	for offset := 0; ; offset += batchSize {
 		rows, err := d.stmtSelectFileBatchForBins.Query(batchSize, offset)
 		if err != nil {
@@ -862,8 +889,11 @@ func (d *DataFillerSqlite) RebuildBinTable(batchSize int, progress dataprovider.
 		processed := false
 		for rows.Next() {
 			processed = true
+			processedTotal++
+			var pathID int64
+			var parentID int64
 			var fileSize int64
-			if err := rows.Scan(&fileSize); err != nil {
+			if err := rows.Scan(&pathID, &parentID, &fileSize); err != nil {
 				rows.Close()
 				return err
 			}
@@ -878,8 +908,25 @@ func (d *DataFillerSqlite) RebuildBinTable(batchSize int, progress dataprovider.
 					binIndex = binCount - 1
 				}
 			}
-			binTotals[binIndex].totalSize += fileSize
-			binTotals[binIndex].fileCount++
+			dirs, err := d.ancestorDirIDs(parentID)
+			if err != nil {
+				rows.Close()
+				return err
+			}
+			levels := len(dirs)
+			if levels > binDirLevels {
+				levels = binDirLevels
+			}
+			for i := 0; i < levels; i++ {
+				key := binGroupKey{level: i + 1, dirID: dirs[i]}
+				totals := groupTotals[key]
+				if totals == nil {
+					totals = &[binCount]binTotal{}
+					groupTotals[key] = totals
+				}
+				totals[binIndex].totalSize += fileSize
+				totals[binIndex].fileCount++
+			}
 		}
 		if err := rows.Err(); err != nil {
 			rows.Close()
@@ -890,25 +937,38 @@ func (d *DataFillerSqlite) RebuildBinTable(batchSize int, progress dataprovider.
 			break
 		}
 		if progress != nil {
-			progress(int64(offset+batchSize), totalRows)
+			progress(processedTotal, totalRows)
 		}
 	}
 
-	for i, total := range binTotals {
-		// Bin boundaries are the inverse of the binIndex formula above (maxBinSize^(i/(binCount-1))),
-		// so no extra multiplication by maxBinSize is needed here.
-		startSize := int64(0)
-		if i > 0 {
-			startSize = int64(math.Exp(float64(i) / float64(binCount-1) * math.Log(float64(maxBinSize))))
-		}
-		endSize := maxBinSize
-		if i < binCount-1 {
-			endSize = int64(math.Exp(float64(i+1) / float64(binCount-1) * math.Log(float64(maxBinSize))))
-		}
-		if _, err := d.stmtInsertBin.Exec(i, total.totalSize, total.fileCount, startSize, endSize); err != nil {
-			return err
+	tx, err := d.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	stmt := tx.Stmt(d.stmtInsertBin)
+	defer stmt.Close()
+	for key, totals := range groupTotals {
+		for i, total := range totals {
+			// Bin boundaries are the inverse of the binIndex formula above (maxBinSize^(i/(binCount-1))),
+			// so no extra multiplication by maxBinSize is needed here.
+			startSize := int64(0)
+			if i > 0 {
+				startSize = int64(math.Exp(float64(i) / float64(binCount-1) * math.Log(float64(maxBinSize))))
+			}
+			endSize := maxBinSize
+			if i < binCount-1 {
+				endSize = int64(math.Exp(float64(i+1) / float64(binCount-1) * math.Log(float64(maxBinSize))))
+			}
+			if _, err := stmt.Exec(key.level, key.dirID, i, total.totalSize, total.fileCount, startSize, endSize); err != nil {
+				return err
+			}
 		}
 	}
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+
 	if progress != nil {
 		progress(totalRows, totalRows)
 	}
