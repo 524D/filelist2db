@@ -705,3 +705,105 @@ func TestRebuildDirTableStoresAcquisitionTimeRange(t *testing.T) {
 		t.Fatalf("second folder acquisition range mismatch: got min=%d max=%d want min=2000 max=2000", seen[1].min, seen[1].max)
 	}
 }
+
+func TestSetProtectedPatternsMarksMatchingSearchResults(t *testing.T) {
+	dbFile := filepath.Join(t.TempDir(), "db.sqlite")
+	filler, err := datafillersqlite.InitDataFillerSqlite(dbFile)
+	if err != nil {
+		t.Fatalf("InitDataFillerSqlite returned error: %v", err)
+	}
+	if err := filler.SetSourceInfo("computername", "E:", 1000); err != nil {
+		t.Fatalf("SetSourceInfo returned error: %v", err)
+	}
+	if err := filler.AddFile(dataprovider.FileInfo{Path: "folder/secret.txt", Size: 10, Mtime: 100, Atime: 200, Uid: 7}); err != nil {
+		t.Fatalf("AddFile secret file returned error: %v", err)
+	}
+	if err := filler.AddFile(dataprovider.FileInfo{Path: "folder/public.txt", Size: 20, Mtime: 100, Atime: 200, Uid: 7}); err != nil {
+		t.Fatalf("AddFile public file returned error: %v", err)
+	}
+	if err := filler.SetProtectedPatterns([]string{"secret"}); err != nil {
+		t.Fatalf("SetProtectedPatterns returned error: %v", err)
+	}
+	filler.Finalize()
+
+	p, err := dataprovidersqlite.InitDataProviderSqlite(dbFile)
+	if err != nil {
+		t.Fatalf("InitDataProviderSqlite returned error: %v", err)
+	}
+	defer p.Finalize()
+
+	results, _, err := p.Search(dataprovider.SearchSelection{
+		Path: "txt", ResultsLimit: 10, Kind: -1,
+		SizeMin: -1, SizeMax: -1, MtimeMin: -1, MtimeMax: -1, AtimeMin: -1, AtimeMax: -1,
+	})
+	if err != nil {
+		t.Fatalf("Search returned error: %v", err)
+	}
+	protectedByPath := make(map[string]bool)
+	for _, r := range results {
+		protectedByPath[r.Path] = r.Extra["protected"] == true
+	}
+	if !protectedByPath["computername/E:/folder/secret.txt"] {
+		t.Fatalf("expected secret.txt to be marked protected, got results: %#v", results)
+	}
+	if protectedByPath["computername/E:/folder/public.txt"] {
+		t.Fatalf("expected public.txt to not be marked protected, got results: %#v", results)
+	}
+}
+
+func TestSetProtectedPatternsMarksDirInfoAndSubdirs(t *testing.T) {
+	dbFile := filepath.Join(t.TempDir(), "db.sqlite")
+	filler, err := datafillersqlite.InitDataFillerSqlite(dbFile)
+	if err != nil {
+		t.Fatalf("InitDataFillerSqlite returned error: %v", err)
+	}
+	if err := filler.SetSourceInfo("computername", "E:", 1000); err != nil {
+		t.Fatalf("SetSourceInfo returned error: %v", err)
+	}
+	if err := filler.AddFile(dataprovider.FileInfo{Path: "confidential/a.txt", Size: 10, Mtime: 100, Atime: 200, Uid: 7}); err != nil {
+		t.Fatalf("AddFile returned error: %v", err)
+	}
+	if err := filler.AddFile(dataprovider.FileInfo{Path: "public/b.txt", Size: 20, Mtime: 100, Atime: 200, Uid: 7}); err != nil {
+		t.Fatalf("AddFile returned error: %v", err)
+	}
+	if err := filler.RebuildDirTable(1000, nil); err != nil {
+		t.Fatalf("RebuildDirTable returned error: %v", err)
+	}
+	if err := filler.SetProtectedPatterns([]string{"^confidential$"}); err != nil {
+		t.Fatalf("SetProtectedPatterns returned error: %v", err)
+	}
+	filler.Finalize()
+
+	p, err := dataprovidersqlite.InitDataProviderSqlite(dbFile)
+	if err != nil {
+		t.Fatalf("InitDataProviderSqlite returned error: %v", err)
+	}
+	defer p.Finalize()
+
+	info, err := p.DirInfo("computername", "E:/confidential")
+	if err != nil {
+		t.Fatalf("DirInfo returned error: %v", err)
+	}
+	if got, _ := info["protected"].(bool); !got {
+		t.Fatalf("expected DirInfo for 'confidential' to be marked protected, got: %#v", info["protected"])
+	}
+
+	rootInfo, err := p.DirInfo("computername", "E:")
+	if err != nil {
+		t.Fatalf("DirInfo returned error: %v", err)
+	}
+	subDirs, ok := rootInfo["subDirs"].([]dataprovider.SubDirStats)
+	if !ok {
+		t.Fatalf("subDirs has unexpected type: %#v", rootInfo["subDirs"])
+	}
+	protectedByName := make(map[string]bool)
+	for _, sd := range subDirs {
+		protectedByName[sd.Name] = sd.Extra["protected"] == true
+	}
+	if !protectedByName["confidential"] {
+		t.Fatalf("expected subdir 'confidential' to be marked protected, got: %#v", subDirs)
+	}
+	if protectedByName["public"] {
+		t.Fatalf("expected subdir 'public' to not be marked protected, got: %#v", subDirs)
+	}
+}

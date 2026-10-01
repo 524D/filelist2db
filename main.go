@@ -23,10 +23,11 @@ import (
 )
 
 type Args struct {
-	dbFile          string
-	buildDirSummary bool
-	buildBinTable   bool
-	cpuProfile      string
+	dbFile            string
+	buildDirSummary   bool
+	buildBinTable     bool
+	cpuProfile        string
+	protectedPatterns string
 }
 
 var args Args
@@ -60,12 +61,13 @@ func parseCmdLine() []string {
 	flag.BoolVar(&args.buildDirSummary, "build-dir-summary", true, "rebuild the dir summary table from file2 after processing input files")
 	flag.BoolVar(&args.buildBinTable, "build-bin-table", true, "rebuild the file-size bin table after processing input files")
 	flag.StringVar(&args.cpuProfile, "cpuprofile", "", "write a CPU profile to this file; visualize with: go tool pprof -http=:8080 <profile-file>")
+	flag.StringVar(&args.protectedPatterns, "protected-patterns", "", "path to a file with one regular expression per line (# starts a comment); matching file/directory names are marked protected. Replaces any previously stored patterns; can be used standalone without file lists to update an existing database")
 	flag.Parse()
 
 	files := flag.Args()
 
-	// If no files are provided, only allow a summary-only run when enabled.
-	if len(files) == 0 && !args.buildDirSummary && !args.buildBinTable {
+	// If no files are provided, only allow a summary-only or patterns-only run.
+	if len(files) == 0 && !args.buildDirSummary && !args.buildBinTable && args.protectedPatterns == "" {
 		flag.Usage()
 	}
 
@@ -256,6 +258,24 @@ func processListFile(d datafiller.DataFiller, fn string) error {
 	return err
 }
 
+// readProtectedPatterns reads one regular expression per line from fn.
+// Blank lines and lines starting with '#' are ignored.
+func readProtectedPatterns(fn string) ([]string, error) {
+	data, err := os.ReadFile(fn)
+	if err != nil {
+		return nil, err
+	}
+	var patterns []string
+	for _, line := range strings.Split(string(data), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		patterns = append(patterns, line)
+	}
+	return patterns, nil
+}
+
 func main() {
 	log.SetFlags(log.LstdFlags | log.Lshortfile)
 
@@ -284,6 +304,16 @@ func main() {
 	for _, fn := range files {
 		err = processListFile(f, fn)
 		if err != nil {
+			log.Fatal(err)
+		}
+	}
+
+	if args.protectedPatterns != "" {
+		patterns, err := readProtectedPatterns(args.protectedPatterns)
+		if err != nil {
+			log.Fatal(err)
+		}
+		if err := f.SetProtectedPatterns(patterns); err != nil {
 			log.Fatal(err)
 		}
 	}
