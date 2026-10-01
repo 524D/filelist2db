@@ -7,6 +7,9 @@ type DataFiller interface {
 	AddFile(dataprovider.FileInfo) error
 	RebuildDirTable(batchSize int, progress dataprovider.ProgressFunc) error
 	RebuildBinTable(batchSize int, progress dataprovider.ProgressFunc) error
+	// SetProtectedPatterns replaces the full set of regular expressions used to
+	// mark matching file/directory names as protected.
+	SetProtectedPatterns(patterns []string) error
 	Finalize()
 	StartTransaction() error
 	CommitTransaction() error

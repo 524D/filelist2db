@@ -20,6 +20,8 @@ type SearchResult struct {
 	Atime     int64
 	FileCount int64
 	TotalSize uint64
+	// Extra holds extensible, ad-hoc result attributes, e.g. Extra["protected"] (bool).
+	Extra map[string]any
 }
 
 // SubDirStats contains info about a subdirectory: its name, cumulative size, and cumulative file count.
@@ -27,6 +29,8 @@ type SubDirStats struct {
 	Name      string
 	Size      uint64
 	FileCount int64
+	// Extra holds extensible, ad-hoc attributes, e.g. Extra["protected"] (bool).
+	Extra map[string]any
 }
 
 type TimeBin struct {

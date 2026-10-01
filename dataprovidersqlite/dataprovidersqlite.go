@@ -3,6 +3,7 @@ package dataprovidersqlite
 import (
 	"database/sql"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"time"
 
@@ -18,6 +19,8 @@ type DataProviderSqlite struct {
 	acqTime               int64
 	ancestorDirIDsCache   []int64
 	ancestorDirIDCachePos map[int64]int
+	// protectedPatterns are compiled once at Init; matching a leaf name marks it as protected.
+	protectedPatterns []*regexp.Regexp
 	// Prepared statements required for read-only queries.
 	stmtSelectPathElem                    *sql.Stmt
 	stmtSelectPathIDByElemAndParentPathID *sql.Stmt
@@ -55,7 +58,55 @@ func InitDataProviderSqlite(dbFile string) (dataprovider.DataProvider, error) {
 	if d.stmtSelectBinSizes, err = db.Prepare(`SELECT bin_index, total_size, file_count FROM bin WHERE dir_path_id = ? ORDER BY bin_index`); err != nil {
 		return nil, err
 	}
+	if err := d.loadProtectedPatterns(); err != nil {
+		return nil, err
+	}
 	return &d, nil
+}
+
+// loadProtectedPatterns reads and compiles the protected-name patterns.
+// The protected_pattern table is optional; databases created before this
+// feature existed simply have no patterns configured.
+func (d *DataProviderSqlite) loadProtectedPatterns() error {
+	rows, err := d.db.Query(`SELECT pattern FROM protected_pattern`)
+	if err != nil {
+		if strings.Contains(err.Error(), "no such table") {
+			return nil
+		}
+		return err
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var pattern string
+		if err := rows.Scan(&pattern); err != nil {
+			return err
+		}
+		re, err := regexp.Compile(pattern)
+		if err != nil {
+			return err
+		}
+		d.protectedPatterns = append(d.protectedPatterns, re)
+	}
+	return rows.Err()
+}
+
+// isProtected reports whether name matches any configured protected-name pattern.
+func (d *DataProviderSqlite) isProtected(name string) bool {
+	for _, re := range d.protectedPatterns {
+		if re.MatchString(name) {
+			return true
+		}
+	}
+	return false
+}
+
+// leafName returns the last '/'-separated element of a resolved path.
+func leafName(path string) string {
+	if idx := strings.LastIndex(path, "/"); idx != -1 {
+		return path[idx+1:]
+	}
+	return path
 }
 
 func openReadOnlyDatabase(dbFile string) (*sql.DB, error) {
@@ -154,15 +205,7 @@ func (d *DataProviderSqlite) DataSources() ([]string, error) {
 
 // Resolve the path ID for a directory under a given source root
 func (d *DataProviderSqlite) resolvePathIDInSource(source string, dir string) (int64, error) {
-	elems := []string{source}
-	trimmed := strings.TrimSpace(dir)
-	trimmed = strings.Trim(trimmed, "/")
-	parts := strings.Split(trimmed, "/")
-	for _, part := range parts {
-		if part != "" {
-			elems = append(elems, part)
-		}
-	}
+	elems := buildPathElems(source, dir)
 	parentID := int64(-1)
 	for _, elem := range elems {
 		var pathElemID int64
@@ -179,6 +222,20 @@ func (d *DataProviderSqlite) resolvePathIDInSource(source string, dir string) (i
 	return parentID, nil
 }
 
+// buildPathElems splits source+dir into the ordered list of path elements to resolve.
+func buildPathElems(source string, dir string) []string {
+	elems := []string{source}
+	trimmed := strings.TrimSpace(dir)
+	trimmed = strings.Trim(trimmed, "/")
+	parts := strings.Split(trimmed, "/")
+	for _, part := range parts {
+		if part != "" {
+			elems = append(elems, part)
+		}
+	}
+	return elems
+}
+
 func (d *DataProviderSqlite) DirInfo(source string, dir string) (map[string]any, error) {
 	pathID, err := d.resolvePathIDInSource(source, dir)
 	if err == sql.ErrNoRows {
@@ -186,6 +243,8 @@ func (d *DataProviderSqlite) DirInfo(source string, dir string) (map[string]any,
 	} else if err != nil {
 		return nil, err
 	}
+	elems := buildPathElems(source, dir)
+	protected := d.isProtected(elems[len(elems)-1])
 
 	var mSizes = make([]uint64, 6)
 	var aSizes = make([]uint64, 6)
@@ -228,6 +287,7 @@ func (d *DataProviderSqlite) DirInfo(source string, dir string) (map[string]any,
 			Name:      elem,
 			Size:      uint64(totalSize),
 			FileCount: fileCount,
+			Extra:     map[string]any{"protected": d.isProtected(elem)},
 		})
 	}
 	if err := rows.Err(); err != nil {
@@ -267,6 +327,7 @@ func (d *DataProviderSqlite) DirInfo(source string, dir string) (map[string]any,
 	info["genTime"] = genTime
 	info["timeBins"] = timeBins
 	info["subDirs"] = subDirs
+	info["protected"] = protected
 	// Binned size info is only available for the outermost few directory levels,
 	// so only include it when data was actually found.
 	if len(sizeBins) > 0 {
@@ -407,6 +468,7 @@ func (d *DataProviderSqlite) Search(selection dataprovider.SearchSelection) ([]d
 				Atime:     atime,
 				FileCount: fileCount,
 				TotalSize: uint64(totalSize),
+				Extra:     map[string]any{"protected": d.isProtected(leafName(path))},
 			})
 		}
 		if err := rows.Err(); err != nil {
@@ -514,6 +576,7 @@ func (d *DataProviderSqlite) Search(selection dataprovider.SearchSelection) ([]d
 			Atime:     atime,
 			FileCount: fileCount,
 			TotalSize: uint64(totalSize),
+			Extra:     map[string]any{"protected": d.isProtected(leafName(path))},
 		})
 	}
 	if err := rows.Err(); err != nil {
@@ -556,6 +619,7 @@ func (d *DataProviderSqlite) SearchBySimpleName(name string, limit int) ([]datap
 			Atime:     atime,
 			FileCount: fileCount,
 			TotalSize: uint64(totalSize),
+			Extra:     map[string]any{"protected": d.isProtected(leafName(path))},
 		})
 		return nil
 	}

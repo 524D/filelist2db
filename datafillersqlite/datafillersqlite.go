@@ -5,6 +5,7 @@ import (
 	"math/bits"
 	"path"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strings"
 	"time"
@@ -52,6 +53,8 @@ type DataFillerSqlite struct {
 	stmtInsertBin                 *sql.Stmt
 	stmtBeginTransaction          *sql.Stmt
 	stmtCommitTransaction         *sql.Stmt
+	stmtDeleteProtectedPatterns   *sql.Stmt
+	stmtInsertProtectedPattern    *sql.Stmt
 }
 
 var _ datafiller.DataFiller = (*DataFillerSqlite)(nil)
@@ -138,6 +141,12 @@ func InitDataFillerSqlite(dbFile string) (*DataFillerSqlite, error) {
 		return nil, err
 	}
 	if d.stmtCommitTransaction, err = db.Prepare(`END TRANSACTION`); err != nil {
+		return nil, err
+	}
+	if d.stmtDeleteProtectedPatterns, err = db.Prepare(`DELETE FROM protected_pattern`); err != nil {
+		return nil, err
+	}
+	if d.stmtInsertProtectedPattern, err = db.Prepare(`INSERT INTO protected_pattern (pattern) VALUES (?)`); err != nil {
 		return nil, err
 	}
 	return d, nil
@@ -283,6 +292,14 @@ func createTables(db *sql.DB) error {
 		return err
 	}
 
+	_, err = db.Exec(`CREATE TABLE IF NOT EXISTS protected_pattern (
+		id INTEGER PRIMARY KEY,
+		pattern TEXT NOT NULL
+	)`)
+	if err != nil {
+		return err
+	}
+
 	_, err = db.Exec(`CREATE INDEX IF NOT EXISTS file_path_idx ON file (path_id)`)
 	if err != nil {
 		return err
@@ -359,6 +376,12 @@ func (d *DataFillerSqlite) Finalize() {
 	}
 	if d.stmtCommitTransaction != nil {
 		d.stmtCommitTransaction.Close()
+	}
+	if d.stmtDeleteProtectedPatterns != nil {
+		d.stmtDeleteProtectedPatterns.Close()
+	}
+	if d.stmtInsertProtectedPattern != nil {
+		d.stmtInsertProtectedPattern.Close()
 	}
 	if d.db != nil {
 		d.db.Close()
@@ -965,4 +988,25 @@ func (d *DataFillerSqlite) StartTransaction() error {
 func (d *DataFillerSqlite) CommitTransaction() error {
 	_, err := d.stmtCommitTransaction.Exec()
 	return err
+}
+
+// SetProtectedPatterns replaces the full set of protected-name regular expressions.
+func (d *DataFillerSqlite) SetProtectedPatterns(patterns []string) error {
+	for _, p := range patterns {
+		if _, err := regexp.Compile(p); err != nil {
+			return err
+		}
+	}
+	if err := d.StartTransaction(); err != nil {
+		return err
+	}
+	if _, err := d.stmtDeleteProtectedPatterns.Exec(); err != nil {
+		return err
+	}
+	for _, p := range patterns {
+		if _, err := d.stmtInsertProtectedPattern.Exec(p); err != nil {
+			return err
+		}
+	}
+	return d.CommitTransaction()
 }
