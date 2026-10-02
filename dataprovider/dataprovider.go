@@ -19,13 +19,14 @@ type FileInfo struct {
 
 // SearchResult is a single file or directory match returned by Search or SearchBySimpleName.
 type SearchResult struct {
-	Kind      string
-	Path      string
-	Size      uint64
-	Mtime     int64
-	Atime     int64
-	FileCount int64
-	TotalSize uint64
+	Kind      string // "file" or "dir"
+	Source    string // Data source name, e.g. computer name or network share name
+	Path      string // Path, if data source is a computer name the computer name is not included in the path, if data source is a network share name the share name IS included in the path
+	Size      uint64 // For files, the file size in bytes. No used for directories.
+	Mtime     int64  // For files, the last modification time as a Unix timestamp. Not used for directories.
+	Atime     int64  // For files, the last access time as a Unix timestamp. Not used for directories.
+	FileCount int64  // For directories, the number of files in the directory. Not used for files.
+	TotalSize uint64 // For directories, the total size of all files in the directory. Not used for files.
 	// Extra holds extensible, ad-hoc result attributes, e.g. Extra["protected"] (bool).
 	Extra map[string]any
 }
@@ -48,6 +49,7 @@ type TimeBin struct {
 type SearchSelection struct {
 	Kind         int64
 	Path         string
+	Source       string
 	SimplePath   bool
 	SizeMin      int64
 	SizeMax      int64
