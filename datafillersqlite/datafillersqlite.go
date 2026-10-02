@@ -980,7 +980,14 @@ func (d *DataFillerSqlite) RebuildBinTable(batchSize int, progress dataprovider.
 	stmt := tx.Stmt(d.stmtInsertBin)
 	defer stmt.Close()
 	for key, totals := range groupTotals {
-		for i, total := range totals {
+		// Remove the items at the end of "totals" that have zero counts, so that we don't write out empty bins.
+		lastNonZero := binCount - 1
+		for lastNonZero >= 0 && totals[lastNonZero].fileCount == 0 {
+			lastNonZero--
+		}
+		totalsCapped := totals[:lastNonZero+1]
+
+		for i, total := range totalsCapped {
 			if _, err := stmt.Exec(key.level, key.dirID, i, total.totalSize, total.fileCount); err != nil {
 				return err
 			}
