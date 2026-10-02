@@ -22,6 +22,7 @@ const (
 	nodeTypeShareName    = 3
 )
 
+// DataFillerSqlite is the SQLite-backed implementation of datafiller.DataFiller.
 type DataFillerSqlite struct {
 	db                            *sql.DB
 	dataSource                    string
@@ -59,6 +60,8 @@ type DataFillerSqlite struct {
 
 var _ datafiller.DataFiller = (*DataFillerSqlite)(nil)
 
+// InitDataFillerSqlite opens (creating if needed) the SQLite database at dbFile,
+// ensures its schema exists, and returns a ready-to-use DataFillerSqlite.
 func InitDataFillerSqlite(dbFile string) (*DataFillerSqlite, error) {
 	db, err := openDatabase(dbFile)
 	if err != nil {
@@ -316,6 +319,7 @@ func createTables(db *sql.DB) error {
 	return nil
 }
 
+// Finalize closes all prepared statements and the underlying database connection.
 func (d *DataFillerSqlite) Finalize() {
 	if d.stmtSelectPathElem != nil {
 		d.stmtSelectPathElem.Close()
@@ -659,6 +663,9 @@ func (d *DataFillerSqlite) flushDirSummaryBatch(stats map[int64]*dirSummary) err
 	return tx.Commit()
 }
 
+// SetSourceInfo registers the data source name, base path, and acquisition time
+// for files added via subsequent AddFile calls, and deletes any previously
+// stored path/file/dir rows for the same source/base path.
 func (d *DataFillerSqlite) SetSourceInfo(dataSource string, basePath string, acqTime int64) error {
 	d.dataSource = dataSource
 	d.basePath = basePath
@@ -721,6 +728,7 @@ func (d *DataFillerSqlite) SetSourceInfo(dataSource string, basePath string, acq
 	return nil
 }
 
+// AddFile inserts a file's metadata, creating any missing path elements along the way.
 func (d *DataFillerSqlite) AddFile(f dataprovider.FileInfo) error {
 	pathId := int64(-1)
 	var elemsIds []int64
@@ -761,6 +769,10 @@ func (d *DataFillerSqlite) AddFile(f dataprovider.FileInfo) error {
 	return err
 }
 
+// RebuildDirTable recomputes the dir table (per-directory cumulative file
+// count, size, and mtime/atime size-by-age buckets) from the file table,
+// processing rows in batches of batchSize and reporting progress (processed,
+// total) via progress if non-nil.
 func (d *DataFillerSqlite) RebuildDirTable(batchSize int, progress dataprovider.ProgressFunc) error {
 	if batchSize <= 0 {
 		batchSize = 1000
@@ -870,6 +882,10 @@ type binTotal struct {
 	fileCount int64
 }
 
+// RebuildBinTable recomputes the bin table (per-directory, power-of-two
+// file-size histogram, for the outermost binDirLevels directory levels) from
+// the file table, processing rows in batches of batchSize and reporting
+// progress (processed, total) via progress if non-nil.
 func (d *DataFillerSqlite) RebuildBinTable(batchSize int, progress dataprovider.ProgressFunc) error {
 	if batchSize <= 0 {
 		batchSize = 1000
@@ -980,11 +996,13 @@ func (d *DataFillerSqlite) RebuildBinTable(batchSize int, progress dataprovider.
 	return nil
 }
 
+// StartTransaction begins a database transaction.
 func (d *DataFillerSqlite) StartTransaction() error {
 	_, err := d.stmtBeginTransaction.Exec()
 	return err
 }
 
+// CommitTransaction commits the transaction started by StartTransaction.
 func (d *DataFillerSqlite) CommitTransaction() error {
 	_, err := d.stmtCommitTransaction.Exec()
 	return err
