@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/524D/filelist2db/dataprovider"
+	"github.com/524D/filelist2db/internal/common"
 	_ "modernc.org/sqlite"
 )
 
@@ -148,22 +149,6 @@ func (d *DataProviderSqlite) Finalize() {
 	if d.db != nil {
 		d.db.Close()
 	}
-}
-
-func simplifyPathElem(elem string) string {
-	p := strings.Index(elem, ".")
-	if p != -1 {
-		elem = elem[:p]
-	}
-	elem = strings.TrimSpace(elem)
-	elem = strings.TrimLeft(elem, "0")
-	elem = strings.Map(func(r rune) rune {
-		if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') {
-			return r
-		}
-		return -1
-	}, elem)
-	return strings.ToLower(elem)
 }
 
 // Database design
@@ -333,7 +318,7 @@ func (d *DataProviderSqlite) DirInfo(source string, dir string) (map[string]any,
 	info["acqTimeMin"] = acqTimeMin
 	info["acqTimeMax"] = acqTimeMax
 	info["genTime"] = genTime
-	info["timeBins"] = timeBins
+	info["timeBins"] = common.TimeBins
 	info["subDirs"] = subDirs
 	// Only include the "protected" key if the directory is actually protected, to avoid cluttering the output with false values.
 	if protected {
@@ -352,15 +337,6 @@ type SizeBin struct {
 	BinIndex  int
 	TotalSize uint64
 	FileCount int64
-}
-
-var timeBins = []dataprovider.TimeBin{
-	{MaxAgeS: (3600 * 24 * 30), Txt: "< 1 month"},
-	{MaxAgeS: (3600 * 24 * 90), Txt: "1 to 3 months"},
-	{MaxAgeS: (3600 * 24 * 365), Txt: "3 to 12 months "},
-	{MaxAgeS: (3600 * 24 * 365 * 3), Txt: "1 to 3 years"},
-	{MaxAgeS: (3600 * 24 * 365 * 5), Txt: "3-5 years"},
-	{MaxAgeS: (3600 * 24 * 365 * 999), Txt: "> 5 years"},
 }
 
 // SameFiles groups files considered duplicates by FindSameFiles.
@@ -509,7 +485,7 @@ func (d *DataProviderSqlite) Search(selection dataprovider.SearchSelection) ([]d
 
 	if pathValid {
 		if selection.SimplePath {
-			simpleTerm := simplifyPathElem(selection.Path)
+			simpleTerm := common.SimplifyPathElem(selection.Path)
 			if simpleTerm != "" {
 				fileWhere += ` AND EXISTS (SELECT 1 FROM simple_path_translate spt JOIN simple_path_elem spe ON spe.id = spt.simple_path_elem_id WHERE spt.path_elem_id = pe.id AND spe.simple_elem LIKE ?)`
 				dirWhere += ` AND EXISTS (SELECT 1 FROM simple_path_translate spt JOIN simple_path_elem spe ON spe.id = spt.simple_path_elem_id WHERE spt.path_elem_id = pe.id AND spe.simple_elem LIKE ?)`
@@ -616,7 +592,7 @@ func (d *DataProviderSqlite) Search(selection dataprovider.SearchSelection) ([]d
 }
 
 // SearchBySimpleName returns files/directories whose simplified name (see
-// simplifyPathElem) starts with the simplified form of name, up to limit
+// common.SimplifyPathElem) starts with the simplified form of name, up to limit
 // results (directories first, then files), a metadata map (currently just
 // "SearchTimeMicroSeconds"), and an error, if any.
 func (d *DataProviderSqlite) SearchBySimpleName(name string, limit int) ([]dataprovider.SearchResult, map[string]interface{}, error) {
@@ -633,7 +609,7 @@ func (d *DataProviderSqlite) SearchBySimpleName(name string, limit int) ([]datap
 		limit = 20
 	}
 
-	simpleTerm := simplifyPathElem(term)
+	simpleTerm := common.SimplifyPathElem(term)
 	if simpleTerm == "" {
 		return nil, meta(), nil
 	}

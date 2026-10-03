@@ -419,8 +419,8 @@ func TestSearchBySimpleNameFindsOriginalPathElements(t *testing.T) {
 	if len(meta) == 0 || meta["SearchTimeMicroSeconds"] == nil {
 		t.Fatalf("SearchBySimpleName metadata missing SearchTimeMicroSeconds")
 	}
-	if got := results[0].Path; got != "computername/E:/folder/sub/My-Report.txt" {
-		t.Fatalf("SearchBySimpleName path mismatch: got %q want %q", got, "computername/E:/folder/sub/My-Report.txt")
+	if got := results[0].Path; got != "E:/folder/sub/My-Report.txt" {
+		t.Fatalf("SearchBySimpleName path mismatch: got %q want %q", got, "E:/folder/sub/My-Report.txt")
 	}
 }
 
@@ -439,8 +439,8 @@ func TestSearchSimplePathOnly(t *testing.T) {
 	if len(results) == 0 {
 		t.Fatalf("Search should find simplified path match for %q", "myreport")
 	}
-	if got := results[0].Path; got != "computername/E:/folder/sub/My-Report.txt" {
-		t.Fatalf("Search path mismatch: got %q want %q", got, "computername/E:/folder/sub/My-Report.txt")
+	if got := results[0].Path; got != "E:/folder/sub/My-Report.txt" {
+		t.Fatalf("Search path mismatch: got %q want %q", got, "E:/folder/sub/My-Report.txt")
 	}
 	if _, ok := meta["SearchTimeMicroSeconds"]; !ok {
 		t.Fatalf("Search metadata missing SearchTimeMicroSeconds")
@@ -463,8 +463,8 @@ func TestSearchSizeRangeOnly(t *testing.T) {
 	if len(results) != 1 {
 		t.Fatalf("Search size-range should return exactly one result, got %d", len(results))
 	}
-	if got := results[0].Path; got != "computername/E:/folder/b.txt" {
-		t.Fatalf("Search path mismatch: got %q want %q", got, "computername/E:/folder/b.txt")
+	if got := results[0].Path; got != "E:/folder/b.txt" {
+		t.Fatalf("Search path mismatch: got %q want %q", got, "E:/folder/b.txt")
 	}
 }
 
@@ -743,10 +743,10 @@ func TestSetProtectedPatternsMarksMatchingSearchResults(t *testing.T) {
 	for _, r := range results {
 		protectedByPath[r.Path] = r.Extra["protected"] == true
 	}
-	if !protectedByPath["computername/E:/folder/secret.txt"] {
+	if !protectedByPath["E:/folder/secret.txt"] {
 		t.Fatalf("expected secret.txt to be marked protected, got results: %#v", results)
 	}
-	if protectedByPath["computername/E:/folder/public.txt"] {
+	if protectedByPath["E:/folder/public.txt"] {
 		t.Fatalf("expected public.txt to not be marked protected, got results: %#v", results)
 	}
 }

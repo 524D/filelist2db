@@ -12,6 +12,7 @@ import (
 
 	"github.com/524D/filelist2db/datafiller"
 	"github.com/524D/filelist2db/dataprovider"
+	"github.com/524D/filelist2db/internal/common"
 	_ "modernc.org/sqlite"
 )
 
@@ -392,22 +393,8 @@ func (d *DataFillerSqlite) Finalize() {
 	}
 }
 
-// Simplify a path element by removing leading zeros and converting to lowercase.
-// It keeps the file extension
-func simplifyPathElem(elem string) string {
-	elem = strings.TrimSpace(elem)
-	elem = strings.TrimLeft(elem, "0")
-	elem = strings.Map(func(r rune) rune {
-		if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') {
-			return r
-		}
-		return -1
-	}, elem)
-	return strings.ToLower(elem)
-}
-
 func (d *DataFillerSqlite) addSimplePathTranslate(pathElemID int64, pathElem string) error {
-	simpleName := simplifyPathElem(pathElem)
+	simpleName := common.SimplifyPathElem(pathElem)
 	if simpleName == "" {
 		return nil
 	}
@@ -549,23 +536,14 @@ type dirSummary struct {
 	acqTimeMax int64
 }
 
-var timeBins = []dataprovider.TimeBin{
-	{MaxAgeS: 3600 * 24 * 30, Txt: "< 1 month"},
-	{MaxAgeS: 3600 * 24 * 90, Txt: "1 to 3 months"},
-	{MaxAgeS: 3600 * 24 * 365, Txt: "3 to 12 months "},
-	{MaxAgeS: 3600 * 24 * 365 * 3, Txt: "1 to 3 years"},
-	{MaxAgeS: 3600 * 24 * 365 * 5, Txt: "3-5 years"},
-	{MaxAgeS: 3600 * 24 * 365 * 999, Txt: "> 5 years"},
-}
-
 func dirTimeBucket(t int64, acqTime int64) int {
 	age := acqTime - t
-	for i, tb := range timeBins {
+	for i, tb := range common.TimeBins {
 		if age < int64(tb.MaxAgeS) {
 			return i
 		}
 	}
-	return len(timeBins) - 1
+	return len(common.TimeBins) - 1
 }
 
 func (d *DataFillerSqlite) ancestorDirIDs(pathID int64) ([]int64, error) {
