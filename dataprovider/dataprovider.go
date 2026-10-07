@@ -78,7 +78,8 @@ type DataProvider interface {
 	DirInfo(source string, dir string) (map[string]any, error)
 	// Search returns the files/directories matching selection, a metadata map
 	// (e.g. "SearchTimeMicroSeconds"), and an error, if any.
-	Search(selection SearchSelection) ([]SearchResult, map[string]interface{}, error)
+	// It honors context cancellation.
+	SearchContext(ctx context.Context, selection SearchSelection) ([]SearchResult, map[string]interface{}, error)
 	// SearchBySimpleNameContext returns files/directories whose simplified name
 	// matches name (up to limit results), while honoring ctx cancellation.
 	SearchBySimpleNameContext(ctx context.Context, name string, limit int) ([]SearchResult, map[string]interface{}, error)
