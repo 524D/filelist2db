@@ -58,10 +58,10 @@ func parseCmdLine() []string {
 	}
 
 	flag.StringVar(&args.dbFile, "db", "db.sqlite", "name of sqlite database to use")
-	flag.BoolVar(&args.buildDirSummary, "build-dir-summary", true, "rebuild the dir summary table from file2 after processing input files")
+	flag.BoolVar(&args.buildDirSummary, "build-dir-summary", true, "rebuild the dir summary table from file2 after processing input files.")
 	flag.BoolVar(&args.buildBinTable, "build-bin-table", true, "rebuild the file-size bin table after processing input files")
 	flag.StringVar(&args.cpuProfile, "cpuprofile", "", "write a CPU profile to this file; visualize with: go tool pprof -http=:8080 <profile-file>")
-	flag.StringVar(&args.protectedPatterns, "protected-patterns", "", "path to a file with one regular expression per line (# starts a comment); matching file/directory names are marked protected. Replaces any previously stored patterns; can be used standalone without file lists to update an existing database")
+	flag.StringVar(&args.protectedPatterns, "protected-patterns", "", "path to a file with one regular expression per line (# starts a comment); matching file/directory names are marked protected. Replaces any previously stored patterns; can be used standalone without file lists to update an existing database. Cannot be used together with -build-dir-summary or -build-bin-table.")
 	flag.Parse()
 
 	files := flag.Args()
@@ -309,6 +309,8 @@ func main() {
 	}
 
 	if args.protectedPatterns != "" {
+		args.buildDirSummary = false
+		args.buildBinTable = false
 		patterns, err := readProtectedPatterns(args.protectedPatterns)
 		if err != nil {
 			log.Fatal(err)
