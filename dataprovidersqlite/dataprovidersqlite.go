@@ -1,6 +1,7 @@
 package dataprovidersqlite
 
 import (
+	"context"
 	"database/sql"
 	"path/filepath"
 	"regexp"
@@ -413,7 +414,7 @@ func (d *DataProviderSqlite) Search(selection dataprovider.SearchSelection) ([]d
 
 	allOthersInvalid := !kindSet && !sizeMinValid && !sizeMaxValid && !mtimeMinValid && !mtimeMaxValid && !atimeMinValid && !atimeMaxValid
 	if pathValid && selection.SimplePath && allOthersInvalid {
-		results, _, err := d.SearchBySimpleName(selection.Path, int(limit))
+		results, _, err := d.SearchBySimpleNameContext(context.Background(), selection.Path, int(limit))
 		if err != nil {
 			return nil, meta(), err
 		}
@@ -591,14 +592,20 @@ func (d *DataProviderSqlite) Search(selection dataprovider.SearchSelection) ([]d
 	return results, meta(), nil
 }
 
-// SearchBySimpleName returns files/directories whose simplified name (see
-// common.SimplifyPathElem) starts with the simplified form of name, up to limit
-// results (directories first, then files), a metadata map (currently just
-// "SearchTimeMicroSeconds"), and an error, if any.
-func (d *DataProviderSqlite) SearchBySimpleName(name string, limit int) ([]dataprovider.SearchResult, map[string]interface{}, error) {
+// SearchBySimpleNameContext returns files/directories whose simplified name starts
+// with the simplified form of name, up to limit results, while honoring ctx.
+// If the request is canceled (for example, a newer search replaced an in-flight
+// one), the database query and row iteration stop promptly.
+func (d *DataProviderSqlite) SearchBySimpleNameContext(ctx context.Context, name string, limit int) ([]dataprovider.SearchResult, map[string]interface{}, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	start := time.Now()
 	meta := func() map[string]interface{} {
 		return map[string]interface{}{"SearchTimeMicroSeconds": time.Since(start).Microseconds()}
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, meta(), err
 	}
 
 	term := strings.TrimSpace(name)
@@ -635,7 +642,7 @@ func (d *DataProviderSqlite) SearchBySimpleName(name string, limit int) ([]datap
 		return nil
 	}
 
-	dirRows, err := d.db.Query(`
+	dirRows, err := d.db.QueryContext(ctx, `
 		SELECT DISTINCT d.path_id, d.total_size, d.file_count
 		FROM dir AS d
 		JOIN path AS p ON p.id = d.path_id
@@ -644,11 +651,17 @@ func (d *DataProviderSqlite) SearchBySimpleName(name string, limit int) ([]datap
 		WHERE spe.simple_elem LIKE ?
 		LIMIT ?`, prefixTerm, limit)
 	if err != nil {
+		if ctx.Err() != nil {
+			return nil, meta(), ctx.Err()
+		}
 		return nil, meta(), err
 	}
 	defer dirRows.Close()
 
 	for dirRows.Next() {
+		if err := ctx.Err(); err != nil {
+			return nil, meta(), err
+		}
 		var pathID int64
 		var totalSize int64
 		var fileCount int64
@@ -663,6 +676,9 @@ func (d *DataProviderSqlite) SearchBySimpleName(name string, limit int) ([]datap
 		}
 	}
 	if err := dirRows.Err(); err != nil {
+		if ctx.Err() != nil {
+			return nil, meta(), ctx.Err()
+		}
 		return nil, meta(), err
 	}
 
@@ -671,7 +687,7 @@ func (d *DataProviderSqlite) SearchBySimpleName(name string, limit int) ([]datap
 		return results, meta(), nil
 	}
 
-	fileRows, err := d.db.Query(`
+	fileRows, err := d.db.QueryContext(ctx, `
 		SELECT DISTINCT f.path_id, f.size, f.mtime, f.atime
 		FROM file AS f
 		JOIN path AS p ON p.id = f.path_id
@@ -680,11 +696,17 @@ func (d *DataProviderSqlite) SearchBySimpleName(name string, limit int) ([]datap
 		WHERE spe.simple_elem LIKE ?
 		LIMIT ?`, prefixTerm, fileLimit)
 	if err != nil {
+		if ctx.Err() != nil {
+			return nil, meta(), ctx.Err()
+		}
 		return nil, meta(), err
 	}
 	defer fileRows.Close()
 
 	for fileRows.Next() {
+		if err := ctx.Err(); err != nil {
+			return nil, meta(), err
+		}
 		var pathID int64
 		var size int64
 		var mtime int64
@@ -700,6 +722,9 @@ func (d *DataProviderSqlite) SearchBySimpleName(name string, limit int) ([]datap
 		}
 	}
 	if err := fileRows.Err(); err != nil {
+		if ctx.Err() != nil {
+			return nil, meta(), ctx.Err()
+		}
 		return nil, meta(), err
 	}
 	return results, meta(), nil

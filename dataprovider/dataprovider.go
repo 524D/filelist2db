@@ -1,5 +1,7 @@
 package dataprovider
 
+import "context"
+
 // UidT is a file owner's numeric user ID (uid).
 type UidT uint64
 
@@ -77,10 +79,9 @@ type DataProvider interface {
 	// Search returns the files/directories matching selection, a metadata map
 	// (e.g. "SearchTimeMicroSeconds"), and an error, if any.
 	Search(selection SearchSelection) ([]SearchResult, map[string]interface{}, error)
-	// SearchBySimpleName returns files/directories whose simplified name matches
-	// name (up to limit results), a metadata map (e.g. "SearchTimeMicroSeconds"),
-	// and an error, if any.
-	SearchBySimpleName(name string, limit int) ([]SearchResult, map[string]interface{}, error)
+	// SearchBySimpleNameContext returns files/directories whose simplified name
+	// matches name (up to limit results), while honoring ctx cancellation.
+	SearchBySimpleNameContext(ctx context.Context, name string, limit int) ([]SearchResult, map[string]interface{}, error)
 	// Finalize closes all resources associated with the data provider.
 	Finalize()
 }

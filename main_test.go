@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"database/sql"
 	"path/filepath"
 	"reflect"
@@ -12,6 +13,18 @@ import (
 	"github.com/524D/filelist2db/dataprovider"
 	"github.com/524D/filelist2db/dataprovidersqlite"
 )
+
+var _ dataprovider.DataProvider = (*dataprovidersqlite.DataProviderSqlite)(nil)
+
+func TestDataProviderSearchBySimpleNameContextInterface(t *testing.T) {
+	var provider dataprovider.DataProvider
+	if provider == nil {
+		_ = provider
+	}
+	_ = func(ctx context.Context, name string, limit int) ([]dataprovider.SearchResult, map[string]interface{}, error) {
+		return provider.SearchBySimpleNameContext(ctx, name, limit)
+	}
+}
 
 func TestDataFillerInterfaceSplit(t *testing.T) {
 	var provider dataprovider.DataProvider
@@ -409,18 +422,18 @@ func TestSearchBySimpleNameFindsOriginalPathElements(t *testing.T) {
 	)
 	defer p.Finalize()
 
-	results, meta, err := p.SearchBySimpleName("myreport", 10)
+	results, meta, err := p.SearchBySimpleNameContext(context.Background(), "myreport", 10)
 	if err != nil {
-		t.Fatalf("SearchBySimpleName returned error: %v", err)
+		t.Fatalf("SearchBySimpleNameContext returned error: %v", err)
 	}
 	if len(results) == 0 {
-		t.Fatalf("SearchBySimpleName should find the original file path for simplified name %q", "myreport")
+		t.Fatalf("SearchBySimpleNameContext should find the original file path for simplified name %q", "myreport")
 	}
 	if len(meta) == 0 || meta["SearchTimeMicroSeconds"] == nil {
-		t.Fatalf("SearchBySimpleName metadata missing SearchTimeMicroSeconds")
+		t.Fatalf("SearchBySimpleNameContext metadata missing SearchTimeMicroSeconds")
 	}
 	if got := results[0].Path; got != "E:/folder/sub/My-Report.txt" {
-		t.Fatalf("SearchBySimpleName path mismatch: got %q want %q", got, "E:/folder/sub/My-Report.txt")
+		t.Fatalf("SearchBySimpleNameContext path mismatch: got %q want %q", got, "E:/folder/sub/My-Report.txt")
 	}
 }
 
