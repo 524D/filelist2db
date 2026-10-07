@@ -16,13 +16,13 @@ import (
 
 var _ dataprovider.DataProvider = (*dataprovidersqlite.DataProviderSqlite)(nil)
 
-func TestDataProviderSearchBySimpleNameContextInterface(t *testing.T) {
+func TestDataProviderSearchBySimpleNameInterface(t *testing.T) {
 	var provider dataprovider.DataProvider
 	if provider == nil {
 		_ = provider
 	}
 	_ = func(ctx context.Context, name string, limit int) ([]dataprovider.SearchResult, map[string]interface{}, error) {
-		return provider.SearchBySimpleNameContext(ctx, name, limit)
+		return provider.SearchBySimpleName(ctx, name, limit)
 	}
 }
 
@@ -422,18 +422,18 @@ func TestSearchBySimpleNameFindsOriginalPathElements(t *testing.T) {
 	)
 	defer p.Finalize()
 
-	results, meta, err := p.SearchBySimpleNameContext(context.Background(), "myreport", 10)
+	results, meta, err := p.SearchBySimpleName(context.Background(), "myreport", 10)
 	if err != nil {
-		t.Fatalf("SearchBySimpleNameContext returned error: %v", err)
+		t.Fatalf("SearchBySimpleName returned error: %v", err)
 	}
 	if len(results) == 0 {
-		t.Fatalf("SearchBySimpleNameContext should find the original file path for simplified name %q", "myreport")
+		t.Fatalf("SearchBySimpleName should find the original file path for simplified name %q", "myreport")
 	}
 	if len(meta) == 0 || meta["SearchTimeMicroSeconds"] == nil {
-		t.Fatalf("SearchBySimpleNameContext metadata missing SearchTimeMicroSeconds")
+		t.Fatalf("SearchBySimpleName metadata missing SearchTimeMicroSeconds")
 	}
 	if got := results[0].Path; got != "E:/folder/sub/My-Report.txt" {
-		t.Fatalf("SearchBySimpleNameContext path mismatch: got %q want %q", got, "E:/folder/sub/My-Report.txt")
+		t.Fatalf("SearchBySimpleName path mismatch: got %q want %q", got, "E:/folder/sub/My-Report.txt")
 	}
 }
 
@@ -445,7 +445,7 @@ func TestSearchSimplePathOnly(t *testing.T) {
 	)
 	defer p.Finalize()
 
-	results, meta, err := p.Search(dataprovider.SearchSelection{Path: "myreport", SimplePath: true, ResultsLimit: 10, Kind: -1, SizeMin: -1, SizeMax: -1, MtimeMin: -1, MtimeMax: -1, AtimeMin: -1, AtimeMax: -1})
+	results, meta, err := p.Search(context.Background(), dataprovider.SearchSelection{Path: "myreport", SimplePath: true, ResultsLimit: 10, Kind: -1, SizeMin: -1, SizeMax: -1, MtimeMin: -1, MtimeMax: -1, AtimeMin: -1, AtimeMax: -1})
 	if err != nil {
 		t.Fatalf("Search returned error: %v", err)
 	}
@@ -469,7 +469,7 @@ func TestSearchSizeRangeOnly(t *testing.T) {
 	)
 	defer p.Finalize()
 
-	results, _, err := p.Search(dataprovider.SearchSelection{SizeMin: 15, SizeMax: 25, ResultsLimit: 10, Kind: -1, MtimeMin: -1, MtimeMax: -1, AtimeMin: -1, AtimeMax: -1})
+	results, _, err := p.Search(context.Background(), dataprovider.SearchSelection{SizeMin: 15, SizeMax: 25, ResultsLimit: 10, Kind: -1, MtimeMin: -1, MtimeMax: -1, AtimeMin: -1, AtimeMax: -1})
 	if err != nil {
 		t.Fatalf("Search returned error: %v", err)
 	}
@@ -745,7 +745,7 @@ func TestSetProtectedPatternsMarksMatchingSearchResults(t *testing.T) {
 	}
 	defer p.Finalize()
 
-	results, _, err := p.Search(dataprovider.SearchSelection{
+	results, _, err := p.Search(context.Background(), dataprovider.SearchSelection{
 		Path: "txt", ResultsLimit: 10, Kind: -1,
 		SizeMin: -1, SizeMax: -1, MtimeMin: -1, MtimeMax: -1, AtimeMin: -1, AtimeMax: -1,
 	})

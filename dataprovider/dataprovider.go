@@ -77,12 +77,12 @@ type DataProvider interface {
 	// directory levels).
 	DirInfo(source string, dir string) (map[string]any, error)
 	// Search returns the files/directories matching selection, a metadata map
-	// (e.g. "SearchTimeMicroSeconds"), and an error, if any.
-	// It honors context cancellation.
-	SearchContext(ctx context.Context, selection SearchSelection) ([]SearchResult, map[string]interface{}, error)
-	// SearchBySimpleNameContext returns files/directories whose simplified name
-	// matches name (up to limit results), while honoring ctx cancellation.
-	SearchBySimpleNameContext(ctx context.Context, name string, limit int) ([]SearchResult, map[string]interface{}, error)
+	// (e.g. "SearchTimeMicroSeconds"), and an error, if any. It honors
+	// context cancellation.
+	Search(ctx context.Context, selection SearchSelection) ([]SearchResult, map[string]interface{}, error)
+	// SearchBySimpleName returns files/directories whose simplified name matches
+	// name (up to limit results), while honoring ctx cancellation.
+	SearchBySimpleName(ctx context.Context, name string, limit int) ([]SearchResult, map[string]interface{}, error)
 	// Finalize closes all resources associated with the data provider.
 	Finalize()
 }

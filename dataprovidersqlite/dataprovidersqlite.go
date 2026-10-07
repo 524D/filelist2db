@@ -378,17 +378,17 @@ func (d *DataProviderSqlite) resolvePathAndSourceByID(pathID int64) (string, str
 			path = strings.Join(parts, "/")
 		} else {
 			path = strings.Join(parts[1:], "/")
-			source = parts[0]
 		}
+		source = parts[0]
 	}
 	return path, source, nil
 }
 
-// SearchContext returns the files/directories matching selection (ordered by path ID,
+// Search returns the files/directories matching selection (ordered by path ID,
 // limited/offset by selection.ResultsLimit/ResultsFirst), a metadata map
 // (currently just "SearchTimeMicroSeconds"), and an error, if any.
 // It honors ctx. If the request is canceled, the query and row iteration stop promptly.
-func (d *DataProviderSqlite) SearchContext(ctx context.Context, selection dataprovider.SearchSelection) ([]dataprovider.SearchResult, map[string]interface{}, error) {
+func (d *DataProviderSqlite) Search(ctx context.Context, selection dataprovider.SearchSelection) ([]dataprovider.SearchResult, map[string]interface{}, error) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -420,7 +420,7 @@ func (d *DataProviderSqlite) SearchContext(ctx context.Context, selection datapr
 
 	allOthersInvalid := !kindSet && !sizeMinValid && !sizeMaxValid && !mtimeMinValid && !mtimeMaxValid && !atimeMinValid && !atimeMaxValid
 	if pathValid && selection.SimplePath && allOthersInvalid {
-		results, _, err := d.SearchBySimpleNameContext(ctx, selection.Path, int(limit))
+		results, _, err := d.SearchBySimpleName(ctx, selection.Path, int(limit))
 		if err != nil {
 			return nil, meta(), err
 		}
@@ -616,11 +616,11 @@ func (d *DataProviderSqlite) SearchContext(ctx context.Context, selection datapr
 	return results, meta(), nil
 }
 
-// SearchBySimpleNameContext returns files/directories whose simplified name starts
-// with the simplified form of name, up to limit results, while honoring ctx.
+// SearchBySimpleName returns files/directories whose simplified name starts with
+// the simplified form of name, up to limit results, while honoring ctx.
 // If the request is canceled (for example, a newer search replaced an in-flight
 // one), the database query and row iteration stop promptly.
-func (d *DataProviderSqlite) SearchBySimpleNameContext(ctx context.Context, name string, limit int) ([]dataprovider.SearchResult, map[string]interface{}, error) {
+func (d *DataProviderSqlite) SearchBySimpleName(ctx context.Context, name string, limit int) ([]dataprovider.SearchResult, map[string]interface{}, error) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
