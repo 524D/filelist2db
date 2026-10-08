@@ -401,7 +401,7 @@ func (d *DataProviderSqlite) Search(ctx context.Context, selection dataprovider.
 	}
 
 	limit := selection.ResultsLimit
-	if limit <= 0 || limit > 20 {
+	if limit <= 0 {
 		limit = 20
 	}
 	first := selection.ResultsFirst
