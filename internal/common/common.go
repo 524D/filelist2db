@@ -8,12 +8,12 @@ import (
 
 // TimeBins defines the common age buckets used by directory summaries.
 var TimeBins = []dataprovider.TimeBin{
-	{MaxAgeS: 3600 * 24 * 30, Txt: "< 1 month"},
-	{MaxAgeS: 3600 * 24 * 90, Txt: "1 to 3 months"},
-	{MaxAgeS: 3600 * 24 * 365, Txt: "3 to 12 months "},
+	{MaxAgeS: 3600 * 24 * 31 * 4, Txt: "< 4 months"},
+	{MaxAgeS: 3600 * 24 * 365, Txt: "4 to 12 months"},
 	{MaxAgeS: 3600 * 24 * 365 * 3, Txt: "1 to 3 years"},
-	{MaxAgeS: 3600 * 24 * 365 * 5, Txt: "3-5 years"},
-	{MaxAgeS: 3600 * 24 * 365 * 999, Txt: "> 5 years"},
+	{MaxAgeS: 3600 * 24 * 365 * 6, Txt: "3 to 6 years"},
+	{MaxAgeS: 3600 * 24 * 365 * 12, Txt: "6 to 12 years"},
+	{MaxAgeS: 3600 * 24 * 365 * 999, Txt: "> 12 years"},
 }
 
 // SimplifyPathElem removes leading zeros, strips non-alphanumeric characters,
