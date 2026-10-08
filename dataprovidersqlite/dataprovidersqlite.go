@@ -350,21 +350,33 @@ type SameFiles struct {
 }
 
 // FindSameFiles returns file groups that share the same size and data source.
-// It ignores time-difference thresholds for now, but keeps the signature consistent
-// with the broader duplicate-detection API.
-func (d *DataProviderSqlite) FindSameFiles(minSize uint64, minTimeDiff int64, maxTimeDiff int64) ([]dataprovider.SameFiles, error) {
-	rows, err := d.db.QueryContext(context.Background(), `
+// The minimum size threshold is inclusive and the scan respects ctx cancellation.
+func (d *DataProviderSqlite) FindSameFiles(ctx context.Context, minSize uint64) ([]dataprovider.SameFiles, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+
+	rows, err := d.db.QueryContext(ctx, `
 		SELECT f.path_id, f.size, f.mtime, f.atime
 		FROM file AS f
 		WHERE f.size >= ?
 		ORDER BY f.size DESC, f.path_id ASC`, minSize)
 	if err != nil {
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
 		return nil, err
 	}
 	defer rows.Close()
 
 	groups := make(map[string]*dataprovider.SameFiles)
 	for rows.Next() {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		var pathID int64
 		var size int64
 		var mtime int64
@@ -397,6 +409,9 @@ func (d *DataProviderSqlite) FindSameFiles(minSize uint64, minTimeDiff int64, ma
 		})
 	}
 	if err := rows.Err(); err != nil {
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
 		return nil, err
 	}
 

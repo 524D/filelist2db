@@ -91,8 +91,9 @@ type DataProvider interface {
 	// name (up to limit results), while honoring ctx cancellation.
 	SearchBySimpleName(ctx context.Context, name string, limit int) ([]SearchResult, map[string]interface{}, error)
 	// FindSameFiles returns groups of files that have the same size and share the
-	// same source/root, with files larger than minSize included.
-	FindSameFiles(minSize uint64, minTimeDiff int64, maxTimeDiff int64) ([]SameFiles, error)
+	// same source/root, with files larger than minSize included. It honors
+	// context cancellation.
+	FindSameFiles(ctx context.Context, minSize uint64) ([]SameFiles, error)
 	// Finalize closes all resources associated with the data provider.
 	Finalize()
 }

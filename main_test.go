@@ -24,6 +24,9 @@ func TestDataProviderSearchBySimpleNameInterface(t *testing.T) {
 	_ = func(ctx context.Context, name string, limit int) ([]dataprovider.SearchResult, map[string]interface{}, error) {
 		return provider.SearchBySimpleName(ctx, name, limit)
 	}
+	_ = func(ctx context.Context, minSize uint64) ([]dataprovider.SameFiles, error) {
+		return provider.FindSameFiles(ctx, minSize)
+	}
 }
 
 func TestDataFillerInterfaceSplit(t *testing.T) {
