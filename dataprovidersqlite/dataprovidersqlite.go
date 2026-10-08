@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"regexp"
 	"slices"
+	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -342,15 +344,75 @@ type SizeBin struct {
 
 // SameFiles groups files considered duplicates by FindSameFiles.
 type SameFiles struct {
-	Files []dataprovider.FileInfo
+	Source string
+	Size   uint64
+	Files  []dataprovider.FileInfo
 }
 
-// FindSameFiles is not yet implemented; it always returns (nil, nil).
-func (d *DataProviderSqlite) FindSameFiles(minSize uint64, minTimeDiff int64, maxTimeDiff int64) ([]SameFiles, error) {
-	// Find files with same size and same mtime
-	// Return slice of SameFiles
+// FindSameFiles returns file groups that share the same size and data source.
+// It ignores time-difference thresholds for now, but keeps the signature consistent
+// with the broader duplicate-detection API.
+func (d *DataProviderSqlite) FindSameFiles(minSize uint64, minTimeDiff int64, maxTimeDiff int64) ([]dataprovider.SameFiles, error) {
+	rows, err := d.db.QueryContext(context.Background(), `
+		SELECT f.path_id, f.size, f.mtime, f.atime
+		FROM file AS f
+		WHERE f.size >= ?
+		ORDER BY f.size DESC, f.path_id ASC`, minSize)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
 
-	return nil, nil
+	groups := make(map[string]*dataprovider.SameFiles)
+	for rows.Next() {
+		var pathID int64
+		var size int64
+		var mtime int64
+		var atime int64
+		if err := rows.Scan(&pathID, &size, &mtime, &atime); err != nil {
+			return nil, err
+		}
+		if size <= 0 {
+			continue
+		}
+		path, source, err := d.resolvePathAndSourceByID(pathID)
+		if err != nil {
+			return nil, err
+		}
+		if path == "" || source == "" {
+			continue
+		}
+		key := source + "\x00" + strconv.FormatUint(uint64(size), 10)
+		group, ok := groups[key]
+		if !ok {
+			group = &dataprovider.SameFiles{Source: source, Size: uint64(size)}
+			groups[key] = group
+		}
+		group.Files = append(group.Files, dataprovider.FileInfo{
+			Path:       path,
+			Size:       uint64(size),
+			Mtime:      mtime,
+			Atime:      atime,
+			AtimeValid: true,
+		})
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	result := make([]dataprovider.SameFiles, 0, len(groups))
+	for _, group := range groups {
+		if len(group.Files) > 1 {
+			result = append(result, *group)
+		}
+	}
+	sort.Slice(result, func(i, j int) bool {
+		if result[i].Size == result[j].Size {
+			return result[i].Source < result[j].Source
+		}
+		return result[i].Size > result[j].Size
+	})
+	return result, nil
 }
 
 func (d *DataProviderSqlite) resolvePathAndSourceByID(pathID int64) (string, string, error) {

@@ -47,6 +47,13 @@ type TimeBin struct {
 	Txt     string // Textual description of time bin
 }
 
+// SameFiles groups files considered duplicates by FindSameFiles.
+type SameFiles struct {
+	Source string
+	Size   uint64
+	Files  []FileInfo
+}
+
 // SearchSelection holds the filter criteria and pagination parameters used by Search.
 type SearchSelection struct {
 	Kind         int64
@@ -83,6 +90,9 @@ type DataProvider interface {
 	// SearchBySimpleName returns files/directories whose simplified name matches
 	// name (up to limit results), while honoring ctx cancellation.
 	SearchBySimpleName(ctx context.Context, name string, limit int) ([]SearchResult, map[string]interface{}, error)
+	// FindSameFiles returns groups of files that have the same size and share the
+	// same source/root, with files larger than minSize included.
+	FindSameFiles(minSize uint64, minTimeDiff int64, maxTimeDiff int64) ([]SameFiles, error)
 	// Finalize closes all resources associated with the data provider.
 	Finalize()
 }
