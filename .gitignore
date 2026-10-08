@@ -4,6 +4,6 @@ cpuprofile*.prof
 /testdata
 
 *.exe
+*.sh
 .vscode/launch.json
 protected-paterns-regex.txt
-run.sh

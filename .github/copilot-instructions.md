@@ -63,6 +63,8 @@ single binary invoked from the shell.
   covered by `.gitignore`. `cpuprofile_0.prof`, `cpuprofile_0_2.prof`, `db*.sqlite`,
   `filelist2db.exe`, `__debug_bin.exe` etc. may appear untracked in a working tree from
   previous local runs; ignore them.
+- `makefilelist/*.sh` are standalone scripts (run elsewhere, e.g. on NAS servers) that
+  generate the file-list input consumed by `filelist2db`; DO NOT access them..
 
 ## Build, test, and validation — verified commands
 
