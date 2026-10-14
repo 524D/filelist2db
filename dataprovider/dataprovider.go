@@ -90,9 +90,12 @@ type DataProvider interface {
 	// SearchBySimpleName returns files/directories whose simplified name matches
 	// name (up to limit results), while honoring ctx cancellation.
 	SearchBySimpleName(ctx context.Context, name string, limit int) ([]SearchResult, map[string]interface{}, error)
-	// FilesInSizeBin returns all files under source+dir whose size falls in the
-	// selected power-of-two bin. It honors context cancellation.
-	FilesInSizeBin(ctx context.Context, source string, dir string, binIndex int) ([]SearchResult, error)
+	// FilesInSizeBin returns the files under source+dir whose size falls in the
+	// selected power-of-two bin, skipping the first `first` matches and returning
+	// at most `limit` (default 200 if <= 0). It also returns the total number of
+	// matching files, regardless of paging. Order is stable across calls. It honors
+	// context cancellation.
+	FilesInSizeBin(ctx context.Context, source string, dir string, binIndex int, first int64, limit int64) ([]SearchResult, int64, error)
 	// FindSameFiles returns groups of files that have the same size and share the
 	// same source/root, with files larger than minSize included. It honors
 	// context cancellation.

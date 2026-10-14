@@ -430,32 +430,51 @@ func (d *DataProviderSqlite) FindSameFiles(ctx context.Context, minSize uint64) 
 	return result, nil
 }
 
-func (d *DataProviderSqlite) FilesInSizeBin(ctx context.Context, source string, dir string, binIndex int) ([]dataprovider.SearchResult, error) {
+func (d *DataProviderSqlite) FilesInSizeBin(ctx context.Context, source string, dir string, binIndex int, first int64, limit int64) ([]dataprovider.SearchResult, int64, error) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
 	if err := ctx.Err(); err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 	if source == "" {
-		return nil, nil
+		return nil, 0, nil
 	}
 
 	if binIndex < 0 {
-		return nil, nil
+		return nil, 0, nil
+	}
+	if limit <= 0 {
+		limit = 200
+	}
+	if first < 0 {
+		first = 0
 	}
 
 	pathID, err := d.resolvePathIDInSource(source, dir)
 	if err == sql.ErrNoRows {
-		return nil, nil
+		return nil, 0, nil
 	} else if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 	if pathID <= 0 {
-		return nil, nil
+		return nil, 0, nil
 	}
 
-	// Requires the tree index built by DataFiller.RebuildTreeIndex.
+	// Requires the tree index built by DataFiller.RebuildTreeIndex; the count is answered from the index alone.
+	var total int64
+	if err := d.db.QueryRowContext(ctx, `
+		SELECT COUNT(*)
+		FROM dir_range AS r
+		JOIN file AS f ON f.size_bin = ? AND f.dir_seq BETWEEN r.lo AND r.hi
+		WHERE r.path_id = ?`, binIndex, pathID).Scan(&total); err != nil {
+		if ctx.Err() != nil {
+			return nil, 0, ctx.Err()
+		}
+		return nil, 0, err
+	}
+
+	// Ordering by (dir_seq, id) follows file_bin_dir_idx, so LIMIT stops early without a sort.
 	rows, err := d.db.QueryContext(ctx, `
 		SELECT p.parent_id, pe.elem, f.size, f.mtime, f.atime
 		FROM dir_range AS r
@@ -463,20 +482,21 @@ func (d *DataProviderSqlite) FilesInSizeBin(ctx context.Context, source string, 
 		JOIN path AS p ON p.id = f.path_id
 		JOIN path_elem AS pe ON pe.id = p.path_elem_id
 		WHERE r.path_id = ?
-		ORDER BY f.size ASC, f.id ASC`, binIndex, pathID)
+		ORDER BY f.dir_seq ASC, f.id ASC
+		LIMIT ? OFFSET ?`, binIndex, pathID, limit, first)
 	if err != nil {
 		if ctx.Err() != nil {
-			return nil, ctx.Err()
+			return nil, 0, ctx.Err()
 		}
-		return nil, err
+		return nil, 0, err
 	}
 	defer rows.Close()
 
 	dirPaths := make(map[int64]string)
-	results := make([]dataprovider.SearchResult, 0)
+	results := make([]dataprovider.SearchResult, 0, limit)
 	for rows.Next() {
 		if err := ctx.Err(); err != nil {
-			return nil, err
+			return nil, 0, err
 		}
 		var parentID int64
 		var elem string
@@ -484,13 +504,13 @@ func (d *DataProviderSqlite) FilesInSizeBin(ctx context.Context, source string, 
 		var mtime int64
 		var atime int64
 		if err := rows.Scan(&parentID, &elem, &size, &mtime, &atime); err != nil {
-			return nil, err
+			return nil, 0, err
 		}
 		dirPath, ok := dirPaths[parentID]
 		if !ok {
 			dirPath, _, err = d.resolvePathAndSourceByID(parentID)
 			if err != nil {
-				return nil, err
+				return nil, 0, err
 			}
 			dirPaths[parentID] = dirPath
 		}
@@ -510,11 +530,11 @@ func (d *DataProviderSqlite) FilesInSizeBin(ctx context.Context, source string, 
 	}
 	if err := rows.Err(); err != nil {
 		if ctx.Err() != nil {
-			return nil, ctx.Err()
+			return nil, 0, ctx.Err()
 		}
-		return nil, err
+		return nil, 0, err
 	}
-	return results, nil
+	return results, total, nil
 }
 
 func (d *DataProviderSqlite) resolvePathAndSourceByID(pathID int64) (string, string, error) {

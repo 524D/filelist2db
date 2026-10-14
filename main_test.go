@@ -24,8 +24,8 @@ func TestDataProviderSearchBySimpleNameInterface(t *testing.T) {
 	_ = func(ctx context.Context, name string, limit int) ([]dataprovider.SearchResult, map[string]interface{}, error) {
 		return provider.SearchBySimpleName(ctx, name, limit)
 	}
-	_ = func(ctx context.Context, source string, dir string, binIndex int) ([]dataprovider.SearchResult, error) {
-		return provider.FilesInSizeBin(ctx, source, dir, binIndex)
+	_ = func(ctx context.Context, source string, dir string, binIndex int, first int64, limit int64) ([]dataprovider.SearchResult, int64, error) {
+		return provider.FilesInSizeBin(ctx, source, dir, binIndex, first, limit)
 	}
 	_ = func(ctx context.Context, minSize uint64) ([]dataprovider.SameFiles, error) {
 		return provider.FindSameFiles(ctx, minSize)
@@ -66,9 +66,12 @@ func TestFilesInSizeBinReturnsMatchingFilesInCurrentDirectory(t *testing.T) {
 	}
 	defer p.Finalize()
 
-	files, err := p.FilesInSizeBin(context.Background(), "computername", "E:", 5)
+	files, total, err := p.FilesInSizeBin(context.Background(), "computername", "E:", 5, 0, 100)
 	if err != nil {
 		t.Fatalf("FilesInSizeBin returned error: %v", err)
+	}
+	if total != 3 {
+		t.Fatalf("FilesInSizeBin total = %d, want 3", total)
 	}
 	if len(files) != 3 {
 		t.Fatalf("FilesInSizeBin returned %d files, want 3 for the [16,31) range", len(files))
@@ -87,12 +90,45 @@ func TestFilesInSizeBinReturnsMatchingFilesInCurrentDirectory(t *testing.T) {
 		t.Fatal("FilesInSizeBin should exclude sizes outside the selected bin")
 	}
 
-	subFiles, err := p.FilesInSizeBin(context.Background(), "computername", "E:/sub", 5)
+	subFiles, subTotal, err := p.FilesInSizeBin(context.Background(), "computername", "E:/sub", 5, 0, 100)
 	if err != nil {
 		t.Fatalf("FilesInSizeBin returned error: %v", err)
 	}
+	if subTotal != 1 {
+		t.Fatalf("FilesInSizeBin total for E:/sub = %d, want 1", subTotal)
+	}
 	if len(subFiles) != 1 || subFiles[0].Path != "E:/sub/C.bin" {
 		t.Fatalf("FilesInSizeBin for E:/sub returned unexpected files: %#v", subFiles)
+	}
+
+	var paged []string
+	for first := int64(0); ; first += 2 {
+		page, pageTotal, err := p.FilesInSizeBin(context.Background(), "computername", "E:", 5, first, 2)
+		if err != nil {
+			t.Fatalf("FilesInSizeBin returned error: %v", err)
+		}
+		if pageTotal != 3 {
+			t.Fatalf("page at %d total = %d, want 3 regardless of paging", first, pageTotal)
+		}
+		if len(page) > 2 {
+			t.Fatalf("page at %d has %d files, want at most 2", first, len(page))
+		}
+		for _, file := range page {
+			paged = append(paged, file.Path)
+		}
+		if len(page) < 2 {
+			break
+		}
+	}
+	if len(paged) != 3 {
+		t.Fatalf("paging returned %d files, want 3: %v", len(paged), paged)
+	}
+	seen := map[string]bool{}
+	for _, path := range paged {
+		if seen[path] {
+			t.Fatalf("paging returned %s twice: %v", path, paged)
+		}
+		seen[path] = true
 	}
 }
 
