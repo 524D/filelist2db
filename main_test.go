@@ -24,8 +24,75 @@ func TestDataProviderSearchBySimpleNameInterface(t *testing.T) {
 	_ = func(ctx context.Context, name string, limit int) ([]dataprovider.SearchResult, map[string]interface{}, error) {
 		return provider.SearchBySimpleName(ctx, name, limit)
 	}
+	_ = func(ctx context.Context, source string, dir string, binIndex int) ([]dataprovider.SearchResult, error) {
+		return provider.FilesInSizeBin(ctx, source, dir, binIndex)
+	}
 	_ = func(ctx context.Context, minSize uint64) ([]dataprovider.SameFiles, error) {
 		return provider.FindSameFiles(ctx, minSize)
+	}
+}
+
+func TestFilesInSizeBinReturnsMatchingFilesInCurrentDirectory(t *testing.T) {
+	dbFile := filepath.Join(t.TempDir(), "db.sqlite")
+	f, err := datafillersqlite.InitDataFillerSqlite(dbFile)
+	if err != nil {
+		t.Fatalf("InitDataFillerSqlite returned error: %v", err)
+	}
+	if err := f.SetSourceInfo("computername", "E:", 1000); err != nil {
+		t.Fatalf("SetSourceInfo returned error: %v", err)
+	}
+	for _, file := range []dataprovider.FileInfo{
+		{Path: "A.bin", Size: 16, Mtime: 100, Atime: 200, Uid: 7},
+		{Path: "B.bin", Size: 24, Mtime: 110, Atime: 210, Uid: 7},
+		{Path: "sub/C.bin", Size: 30, Mtime: 120, Atime: 220, Uid: 7},
+		{Path: "sub/D.bin", Size: 64, Mtime: 130, Atime: 230, Uid: 7},
+		{Path: "other.bin", Size: 128, Mtime: 140, Atime: 240, Uid: 7},
+	} {
+		if err := f.AddFile(file); err != nil {
+			t.Fatalf("AddFile returned error: %v", err)
+		}
+	}
+	if err := f.RebuildDirTable(1000, nil); err != nil {
+		t.Fatalf("RebuildDirTable returned error: %v", err)
+	}
+	if err := f.RebuildTreeIndex(2, nil); err != nil {
+		t.Fatalf("RebuildTreeIndex returned error: %v", err)
+	}
+	f.Finalize()
+
+	p, err := dataprovidersqlite.InitDataProviderSqlite(dbFile)
+	if err != nil {
+		t.Fatalf("InitDataProviderSqlite returned error: %v", err)
+	}
+	defer p.Finalize()
+
+	files, err := p.FilesInSizeBin(context.Background(), "computername", "E:", 5)
+	if err != nil {
+		t.Fatalf("FilesInSizeBin returned error: %v", err)
+	}
+	if len(files) != 3 {
+		t.Fatalf("FilesInSizeBin returned %d files, want 3 for the [16,31) range", len(files))
+	}
+	got := map[string]uint64{}
+	for _, file := range files {
+		got[file.Path] = file.Size
+	}
+	if got["E:/A.bin"] != 16 || got["E:/B.bin"] != 24 || got["E:/sub/C.bin"] != 30 {
+		t.Fatalf("FilesInSizeBin returned unexpected files: %#v", got)
+	}
+	if _, ok := got["E:/other.bin"]; ok {
+		t.Fatal("FilesInSizeBin should exclude files outside the current directory")
+	}
+	if _, ok := got["E:/sub/D.bin"]; ok {
+		t.Fatal("FilesInSizeBin should exclude sizes outside the selected bin")
+	}
+
+	subFiles, err := p.FilesInSizeBin(context.Background(), "computername", "E:/sub", 5)
+	if err != nil {
+		t.Fatalf("FilesInSizeBin returned error: %v", err)
+	}
+	if len(subFiles) != 1 || subFiles[0].Path != "E:/sub/C.bin" {
+		t.Fatalf("FilesInSizeBin for E:/sub returned unexpected files: %#v", subFiles)
 	}
 }
 

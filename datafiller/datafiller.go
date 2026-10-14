@@ -17,6 +17,10 @@ type DataFiller interface {
 	// RebuildBinTable recomputes the file-size histogram table, reporting
 	// progress via progress if non-nil.
 	RebuildBinTable(batchSize int, progress dataprovider.ProgressFunc) error
+	// RebuildTreeIndex renumbers the directory tree and updates every file's
+	// directory sequence number, so that all files under a directory can be
+	// selected with a single range lookup. Must be rerun after importing files.
+	RebuildTreeIndex(batchSize int, progress dataprovider.ProgressFunc) error
 	// SetProtectedPatterns replaces the full set of regular expressions used to
 	// mark matching file/directory names as protected.
 	SetProtectedPatterns(patterns []string) error

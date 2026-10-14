@@ -430,6 +430,93 @@ func (d *DataProviderSqlite) FindSameFiles(ctx context.Context, minSize uint64) 
 	return result, nil
 }
 
+func (d *DataProviderSqlite) FilesInSizeBin(ctx context.Context, source string, dir string, binIndex int) ([]dataprovider.SearchResult, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	if source == "" {
+		return nil, nil
+	}
+
+	if binIndex < 0 {
+		return nil, nil
+	}
+
+	pathID, err := d.resolvePathIDInSource(source, dir)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	} else if err != nil {
+		return nil, err
+	}
+	if pathID <= 0 {
+		return nil, nil
+	}
+
+	// Requires the tree index built by DataFiller.RebuildTreeIndex.
+	rows, err := d.db.QueryContext(ctx, `
+		SELECT p.parent_id, pe.elem, f.size, f.mtime, f.atime
+		FROM dir_range AS r
+		JOIN file AS f ON f.size_bin = ? AND f.dir_seq BETWEEN r.lo AND r.hi
+		JOIN path AS p ON p.id = f.path_id
+		JOIN path_elem AS pe ON pe.id = p.path_elem_id
+		WHERE r.path_id = ?
+		ORDER BY f.size ASC, f.id ASC`, binIndex, pathID)
+	if err != nil {
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
+		return nil, err
+	}
+	defer rows.Close()
+
+	dirPaths := make(map[int64]string)
+	results := make([]dataprovider.SearchResult, 0)
+	for rows.Next() {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		var parentID int64
+		var elem string
+		var size int64
+		var mtime int64
+		var atime int64
+		if err := rows.Scan(&parentID, &elem, &size, &mtime, &atime); err != nil {
+			return nil, err
+		}
+		dirPath, ok := dirPaths[parentID]
+		if !ok {
+			dirPath, _, err = d.resolvePathAndSourceByID(parentID)
+			if err != nil {
+				return nil, err
+			}
+			dirPaths[parentID] = dirPath
+		}
+		path := elem
+		if dirPath != "" {
+			path = dirPath + "/" + elem
+		}
+		results = append(results, dataprovider.SearchResult{
+			Kind:   "file",
+			Source: source,
+			Path:   path,
+			Size:   uint64(size),
+			Mtime:  mtime,
+			Atime:  atime,
+			Extra:  map[string]any{"protected": d.isProtected(elem)},
+		})
+	}
+	if err := rows.Err(); err != nil {
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
+		return nil, err
+	}
+	return results, nil
+}
+
 func (d *DataProviderSqlite) resolvePathAndSourceByID(pathID int64) (string, string, error) {
 	if pathID <= 0 {
 		return "", "", nil

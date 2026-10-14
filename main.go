@@ -351,5 +351,19 @@ func main() {
 		if err != nil {
 			log.Fatal(err)
 		}
+
+		// The size-bin drill-down (FilesInSizeBin) needs the tree index.
+		fmt.Println()
+		treeBar := progressbar.NewOptions(100, progressbar.OptionSetDescription("Rebuilding directory tree index"))
+		treeBar.Set64(0)
+		err = f.RebuildTreeIndex(100000, func(current, total int64) {
+			if total <= 0 {
+				return
+			}
+			treeBar.Set64(current * 100 / total)
+		})
+		if err != nil {
+			log.Fatal(err)
+		}
 	}
 }

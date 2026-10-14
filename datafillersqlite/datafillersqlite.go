@@ -2,6 +2,7 @@ package datafillersqlite
 
 import (
 	"database/sql"
+	"fmt"
 	"math/bits"
 	"path"
 	"path/filepath"
@@ -89,7 +90,7 @@ func InitDataFillerSqlite(dbFile string) (*DataFillerSqlite, error) {
 	if d.stmtInsertPath, err = db.Prepare(`INSERT INTO path (path_elem_id, parent_id, node_type) VALUES (?, ?, ?)`); err != nil {
 		return nil, err
 	}
-	if d.stmtInsertFile, err = db.Prepare(`INSERT INTO file (path_id, size, mtime, atime, uid, acqtime) VALUES (?, ?, ?, ?, ?, ?)`); err != nil {
+	if d.stmtInsertFile, err = db.Prepare(`INSERT INTO file (path_id, size, size_bin, mtime, atime, uid, acqtime) VALUES (?, ?, ?, ?, ?, ?, ?)`); err != nil {
 		return nil, err
 	}
 	if d.stmtInsertInputFile, err = db.Prepare(`INSERT INTO input_file (path_id, timestamp) VALUES (?, ?)`); err != nil {
@@ -201,10 +202,21 @@ func createTables(db *sql.DB) error {
 		id INTEGER PRIMARY KEY,
 		path_id INTEGER NOT NULL DEFAULT 0,
 		size INTEGER NOT NULL DEFAULT 0,
+		size_bin INTEGER NOT NULL DEFAULT 0,
+		dir_seq INTEGER NOT NULL DEFAULT 0,
 		mtime INTEGER NOT NULL DEFAULT 0,
 		atime INTEGER NOT NULL DEFAULT 0,
 		uid INTEGER NOT NULL DEFAULT 0,
 		acqtime INTEGER NOT NULL DEFAULT 0
+	)`)
+	if err != nil {
+		return err
+	}
+	// Subtree of each directory as a range [lo, hi] of directory sequence numbers (see RebuildTreeIndex).
+	_, err = db.Exec(`CREATE TABLE IF NOT EXISTS dir_range (
+		path_id INTEGER PRIMARY KEY,
+		lo INTEGER NOT NULL,
+		hi INTEGER NOT NULL
 	)`)
 	if err != nil {
 		return err
@@ -500,7 +512,7 @@ func (d *DataFillerSqlite) addPathElems(elems []string) ([]int64, error) {
 }
 
 func (d *DataFillerSqlite) addFileDb(f dataprovider.FileInfo, pathId int64) (int64, error) {
-	res, err := d.stmtInsertFile.Exec(pathId, f.Size, f.Mtime, f.Atime, f.Uid, d.acqTime)
+	res, err := d.stmtInsertFile.Exec(pathId, f.Size, bits.Len64(f.Size), f.Mtime, f.Atime, f.Uid, d.acqTime)
 	if err != nil {
 		return 0, err
 	}
@@ -848,7 +860,7 @@ func (d *DataFillerSqlite) RebuildDirTable(batchSize int, progress dataprovider.
 
 // binDirLevels is the number of top directory levels for which size histograms are
 // kept separately (level 1 is the outermost directory below the data source root).
-const binDirLevels = 3
+const binDirLevels = 4
 
 type binGroupKey struct {
 	level int
@@ -979,6 +991,137 @@ func (d *DataFillerSqlite) RebuildBinTable(batchSize int, progress dataprovider.
 		progress(totalRows, totalRows)
 	}
 	return nil
+}
+
+// RebuildTreeIndex numbers the directory tree in depth-first order, stores each
+// directory's subtree as a [lo, hi] range in dir_range, and sets file.dir_seq to
+// the lo of the file's parent directory. A file is then under directory D exactly
+// when D.lo <= file.dir_seq <= D.hi. Files are updated in id ranges of batchSize,
+// reporting progress (processed, total) via progress if non-nil.
+func (d *DataFillerSqlite) RebuildTreeIndex(batchSize int, progress dataprovider.ProgressFunc) error {
+	if batchSize <= 0 {
+		batchSize = 1000
+	}
+	if err := d.rebuildDirRange(); err != nil {
+		return err
+	}
+
+	// Dropped while dir_seq is rewritten so the updates don't have to maintain them.
+	if _, err := d.db.Exec(`DROP INDEX IF EXISTS file_bin_dir_idx`); err != nil {
+		return err
+	}
+	if _, err := d.db.Exec(`DROP INDEX IF EXISTS file_dir_size_idx`); err != nil {
+		return err
+	}
+
+	var minID, maxID sql.NullInt64
+	if err := d.db.QueryRow(`SELECT MIN(id), MAX(id) FROM file`).Scan(&minID, &maxID); err != nil {
+		return err
+	}
+	if minID.Valid {
+		total := maxID.Int64 - minID.Int64 + 1
+		for start := minID.Int64; start <= maxID.Int64; start += int64(batchSize) {
+			end := start + int64(batchSize)
+			if _, err := d.db.Exec(`UPDATE file SET dir_seq = (
+					SELECT r.lo FROM path p JOIN dir_range r ON r.path_id = p.parent_id WHERE p.id = file.path_id
+				) WHERE id >= ? AND id < ?`, start, end); err != nil {
+				return err
+			}
+			if progress != nil {
+				progress(min(end, maxID.Int64+1)-minID.Int64, total)
+			}
+		}
+	}
+
+	if _, err := d.db.Exec(`CREATE INDEX file_bin_dir_idx ON file (size_bin, dir_seq)`); err != nil {
+		return err
+	}
+	if _, err := d.db.Exec(`CREATE INDEX file_dir_size_idx ON file (dir_seq, size)`); err != nil {
+		return err
+	}
+	return nil
+}
+
+// rebuildDirRange recomputes dir_range from the path table.
+func (d *DataFillerSqlite) rebuildDirRange() error {
+	rows, err := d.db.Query(`SELECT id, parent_id FROM path WHERE node_type != 0 ORDER BY id`)
+	if err != nil {
+		return err
+	}
+	var ids []int64
+	var parentIdx []int
+	index := make(map[int64]int)
+	for rows.Next() {
+		var id, parentID int64
+		if err := rows.Scan(&id, &parentID); err != nil {
+			rows.Close()
+			return err
+		}
+		pi := -1
+		if parentID != -1 {
+			var ok bool
+			// A parent directory is always created before its children, so it has a lower id.
+			if pi, ok = index[parentID]; !ok {
+				rows.Close()
+				return fmt.Errorf("directory %d has parent %d that is not a directory with a lower id", id, parentID)
+			}
+		}
+		index[id] = len(ids)
+		ids = append(ids, id)
+		parentIdx = append(parentIdx, pi)
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return err
+	}
+	rows.Close()
+
+	// Subtree sizes: children have higher indexes than their parents.
+	n := len(ids)
+	size := make([]int64, n)
+	for i := range size {
+		size[i] = 1
+	}
+	for i := n - 1; i >= 0; i-- {
+		if p := parentIdx[i]; p >= 0 {
+			size[p] += size[i]
+		}
+	}
+
+	// Pre-order numbers: each directory's subtree is a contiguous block starting at lo.
+	lo := make([]int64, n)
+	next := make([]int64, n)
+	nextRoot := int64(1)
+	for i := 0; i < n; i++ {
+		if p := parentIdx[i]; p >= 0 {
+			lo[i] = next[p]
+			next[p] += size[i]
+		} else {
+			lo[i] = nextRoot
+			nextRoot += size[i]
+		}
+		next[i] = lo[i] + 1
+	}
+
+	tx, err := d.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if _, err := tx.Exec(`DELETE FROM dir_range`); err != nil {
+		return err
+	}
+	stmt, err := tx.Prepare(`INSERT INTO dir_range (path_id, lo, hi) VALUES (?, ?, ?)`)
+	if err != nil {
+		return err
+	}
+	defer stmt.Close()
+	for i, id := range ids {
+		if _, err := stmt.Exec(id, lo[i], lo[i]+size[i]-1); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
 }
 
 // StartTransaction begins a database transaction.
