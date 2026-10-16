@@ -8,7 +8,6 @@ import (
 	"path/filepath"
 	"regexp"
 	"slices"
-	"sort"
 	"strings"
 	"time"
 
@@ -234,13 +233,13 @@ func createTables(db *sql.DB) error {
 	if err != nil {
 		return err
 	}
-	// Totals per (source root, extension), filled by RebuildTreeIndex.
+	// Totals per (directory, extension), filled by RebuildTreeIndex.
 	_, err = db.Exec(`CREATE TABLE IF NOT EXISTS ext_summary (
-		root_id INTEGER NOT NULL,
+		dir_id INTEGER NOT NULL,
 		ext_id INTEGER NOT NULL,
 		total_size INTEGER NOT NULL DEFAULT 0,
 		file_count INTEGER NOT NULL DEFAULT 0,
-		PRIMARY KEY (root_id, ext_id)
+		PRIMARY KEY (dir_id, ext_id)
 	) WITHOUT ROWID`)
 	if err != nil {
 		return err
@@ -1110,53 +1109,35 @@ func (d *DataFillerSqlite) RebuildTreeIndex(batchSize int, progress dataprovider
 	return d.rebuildExtSummary()
 }
 
-// rebuildExtSummary recomputes ext_summary in one ordered scan of file_ext_dir_idx.
+// rebuildExtSummary recomputes ext_summary for every directory, one extension at a time
+// from file_ext_dir_idx, adding each (extension, directory) total to the directory and all its ancestors.
 func (d *DataFillerSqlite) rebuildExtSummary() error {
-	type root struct{ id, lo, hi int64 }
-	var roots []root
-	rootRows, err := d.db.Query(`SELECT r.path_id, r.lo, r.hi FROM dir_range r JOIN path p ON p.id = r.path_id WHERE p.parent_id = -1 ORDER BY r.lo`)
-	if err != nil {
+	if _, err := d.db.Exec(`DELETE FROM ext_summary`); err != nil {
 		return err
 	}
-	for rootRows.Next() {
-		var r root
-		if err := rootRows.Scan(&r.id, &r.lo, &r.hi); err != nil {
-			rootRows.Close()
-			return err
-		}
-		roots = append(roots, r)
-	}
-	if err := rootRows.Err(); err != nil {
-		rootRows.Close()
-		return err
-	}
-	rootRows.Close()
 
-	type key struct{ rootIdx, extID int64 }
-	type total struct{ size, count int64 }
-	totals := make(map[key]*total)
-	rows, err := d.db.Query(`SELECT ext_id, dir_seq, SUM(size), COUNT(*) FROM file INDEXED BY file_ext_dir_idx GROUP BY ext_id, dir_seq`)
+	// dir_seq values are the lo values 1..n of dir_range, so a directory's node is at index lo-1.
+	var n int64
+	if err := d.db.QueryRow(`SELECT COUNT(*) FROM dir_range`).Scan(&n); err != nil {
+		return err
+	}
+	dirIDs := make([]int64, n)
+	parents := make([]int64, n)
+	rows, err := d.db.Query(`SELECT r.lo, r.path_id, COALESCE(pr.lo, 0)
+		FROM dir_range r
+		JOIN path p ON p.id = r.path_id
+		LEFT JOIN dir_range pr ON pr.path_id = p.parent_id`)
 	if err != nil {
 		return err
 	}
 	for rows.Next() {
-		var extID, dirSeq, size, count int64
-		if err := rows.Scan(&extID, &dirSeq, &size, &count); err != nil {
+		var lo, id, parentLo int64
+		if err := rows.Scan(&lo, &id, &parentLo); err != nil {
 			rows.Close()
 			return err
 		}
-		i := sort.Search(len(roots), func(i int) bool { return roots[i].hi >= dirSeq })
-		if i == len(roots) || roots[i].lo > dirSeq {
-			continue
-		}
-		k := key{int64(i), extID}
-		t := totals[k]
-		if t == nil {
-			t = &total{}
-			totals[k] = t
-		}
-		t.size += size
-		t.count += count
+		dirIDs[lo-1] = id
+		parents[lo-1] = parentLo - 1
 	}
 	if err := rows.Err(); err != nil {
 		rows.Close()
@@ -1164,25 +1145,81 @@ func (d *DataFillerSqlite) rebuildExtSummary() error {
 	}
 	rows.Close()
 
-	tx, err := d.db.Begin()
+	rows, err = d.db.Query(`SELECT id FROM ext`)
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback()
-	if _, err := tx.Exec(`DELETE FROM ext_summary`); err != nil {
+	var extIDs []int64
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			rows.Close()
+			return err
+		}
+		extIDs = append(extIDs, id)
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
 		return err
 	}
-	stmt, err := tx.Prepare(`INSERT INTO ext_summary (root_id, ext_id, total_size, file_count) VALUES (?, ?, ?, ?)`)
-	if err != nil {
-		return err
-	}
-	defer stmt.Close()
-	for k, t := range totals {
-		if _, err := stmt.Exec(roots[k.rootIdx].id, k.extID, t.size, t.count); err != nil {
+	rows.Close()
+
+	sizes := make([]int64, n)
+	counts := make([]int64, n)
+	var touched []int64
+	for _, extID := range extIDs {
+		rows, err := d.db.Query(`SELECT dir_seq, SUM(size), COUNT(*) FROM file WHERE ext_id = ? GROUP BY dir_seq`, extID)
+		if err != nil {
+			return err
+		}
+		for rows.Next() {
+			var seq, size, count int64
+			if err := rows.Scan(&seq, &size, &count); err != nil {
+				rows.Close()
+				return err
+			}
+			if seq < 1 || seq > n {
+				continue
+			}
+			for i := seq - 1; i >= 0; i = parents[i] {
+				if counts[i] == 0 {
+					touched = append(touched, i)
+				}
+				sizes[i] += size
+				counts[i] += count
+			}
+		}
+		if err := rows.Err(); err != nil {
+			rows.Close()
+			return err
+		}
+		rows.Close()
+
+		// Written after the read cursor is closed, since a commit can't wait on open readers.
+		tx, err := d.db.Begin()
+		if err != nil {
+			return err
+		}
+		stmt, err := tx.Prepare(`INSERT INTO ext_summary (dir_id, ext_id, total_size, file_count) VALUES (?, ?, ?, ?)`)
+		if err != nil {
+			tx.Rollback()
+			return err
+		}
+		for _, i := range touched {
+			if _, err := stmt.Exec(dirIDs[i], extID, sizes[i], counts[i]); err != nil {
+				stmt.Close()
+				tx.Rollback()
+				return err
+			}
+			sizes[i], counts[i] = 0, 0
+		}
+		touched = touched[:0]
+		stmt.Close()
+		if err := tx.Commit(); err != nil {
 			return err
 		}
 	}
-	return tx.Commit()
+	return nil
 }
 
 // ageBinSQL returns a SQL expression giving the common.TimeBins index of the

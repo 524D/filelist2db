@@ -75,7 +75,7 @@ func TestExtensions(t *testing.T) {
 	}
 	defer p.Finalize()
 
-	exts, err := p.Extensions(context.Background(), "computername")
+	exts, err := p.Extensions(context.Background(), "computername", "")
 	if err != nil {
 		t.Fatalf("Extensions returned error: %v", err)
 	}
@@ -88,9 +88,21 @@ func TestExtensions(t *testing.T) {
 		t.Fatalf("Extensions = %#v, want %#v", exts, want)
 	}
 
+	subExts, err := p.Extensions(context.Background(), "computername", "E:/sub")
+	if err != nil {
+		t.Fatalf("Extensions for E:/sub returned error: %v", err)
+	}
+	wantSub := []dataprovider.ExtensionStats{
+		{Ext: "txt", Size: 20, FileCount: 1},
+		{Ext: "bin", Size: 5, FileCount: 1},
+	}
+	if !reflect.DeepEqual(subExts, wantSub) {
+		t.Fatalf("Extensions for E:/sub = %#v, want %#v", subExts, wantSub)
+	}
+
 	var got []string
 	for first := int64(0); ; first++ {
-		page, total, err := p.FilesWithExtension(context.Background(), "computername", ".TXT", first, 1)
+		page, total, err := p.FilesWithExtension(context.Background(), "computername", "", ".TXT", first, 1)
 		if err != nil {
 			t.Fatalf("FilesWithExtension returned error: %v", err)
 		}
@@ -106,7 +118,11 @@ func TestExtensions(t *testing.T) {
 		t.Fatalf("FilesWithExtension returned %v", got)
 	}
 
-	if files, total, err := p.FilesWithExtension(context.Background(), "computername", "xyz", 0, 10); err != nil || total != 0 || len(files) != 0 {
+	if subFiles, subTotal, err := p.FilesWithExtension(context.Background(), "computername", "E:/sub", "txt", 0, 10); err != nil || subTotal != 1 || len(subFiles) != 1 || subFiles[0].Path != "E:/sub/b.txt" {
+		t.Fatalf("FilesWithExtension for E:/sub = %v, %d, %v", subFiles, subTotal, err)
+	}
+
+	if files, total, err := p.FilesWithExtension(context.Background(), "computername", "", "xyz", 0, 10); err != nil || total != 0 || len(files) != 0 {
 		t.Fatalf("FilesWithExtension for unknown extension = %v, %d, %v", files, total, err)
 	}
 }

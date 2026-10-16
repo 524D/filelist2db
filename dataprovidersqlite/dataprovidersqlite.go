@@ -562,8 +562,8 @@ func (d *DataProviderSqlite) readFileRows(ctx context.Context, rows *sql.Rows, s
 	return results, nil
 }
 
-// Extensions returns the per-extension totals under source from ext_summary, largest total size first.
-func (d *DataProviderSqlite) Extensions(ctx context.Context, source string) ([]dataprovider.ExtensionStats, error) {
+// Extensions returns the per-extension totals under source+dir from ext_summary, largest total size first.
+func (d *DataProviderSqlite) Extensions(ctx context.Context, source string, dir string) ([]dataprovider.ExtensionStats, error) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -573,7 +573,7 @@ func (d *DataProviderSqlite) Extensions(ctx context.Context, source string) ([]d
 	if source == "" {
 		return nil, nil
 	}
-	pathID, err := d.resolvePathIDInSource(source, "")
+	pathID, err := d.resolvePathIDInSource(source, dir)
 	if err == sql.ErrNoRows {
 		return nil, nil
 	} else if err != nil {
@@ -584,7 +584,7 @@ func (d *DataProviderSqlite) Extensions(ctx context.Context, source string) ([]d
 		SELECT e.ext, s.total_size, s.file_count
 		FROM ext_summary AS s
 		JOIN ext AS e ON e.id = s.ext_id
-		WHERE s.root_id = ?
+		WHERE s.dir_id = ?
 		ORDER BY s.total_size DESC, e.ext ASC`, pathID)
 	if err != nil {
 		if ctx.Err() != nil {
@@ -612,8 +612,8 @@ func (d *DataProviderSqlite) Extensions(ctx context.Context, source string) ([]d
 	return result, nil
 }
 
-// FilesWithExtension lists the files under source with extension ext, using the (ext_id, dir_seq, size) index.
-func (d *DataProviderSqlite) FilesWithExtension(ctx context.Context, source string, ext string, first int64, limit int64) ([]dataprovider.SearchResult, int64, error) {
+// FilesWithExtension lists the files under source+dir with extension ext, using the (ext_id, dir_seq, size) index.
+func (d *DataProviderSqlite) FilesWithExtension(ctx context.Context, source string, dir string, ext string, first int64, limit int64) ([]dataprovider.SearchResult, int64, error) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -631,7 +631,7 @@ func (d *DataProviderSqlite) FilesWithExtension(ctx context.Context, source stri
 	}
 	ext = strings.ToLower(strings.TrimPrefix(strings.TrimSpace(ext), "."))
 
-	pathID, err := d.resolvePathIDInSource(source, "")
+	pathID, err := d.resolvePathIDInSource(source, dir)
 	if err == sql.ErrNoRows {
 		return nil, 0, nil
 	} else if err != nil {
@@ -642,7 +642,7 @@ func (d *DataProviderSqlite) FilesWithExtension(ctx context.Context, source stri
 	err = d.db.QueryRowContext(ctx, `
 		SELECT e.id, s.file_count
 		FROM ext AS e
-		JOIN ext_summary AS s ON s.ext_id = e.id AND s.root_id = ?
+		JOIN ext_summary AS s ON s.ext_id = e.id AND s.dir_id = ?
 		WHERE e.ext = ?`, pathID, ext).Scan(&extID, &total)
 	if err == sql.ErrNoRows {
 		return nil, 0, nil
