@@ -35,6 +35,82 @@ func TestDataProviderSearchBySimpleNameInterface(t *testing.T) {
 	}
 }
 
+func TestExtensions(t *testing.T) {
+	dbFile := filepath.Join(t.TempDir(), "db.sqlite")
+	f, err := datafillersqlite.InitDataFillerSqlite(dbFile)
+	if err != nil {
+		t.Fatalf("InitDataFillerSqlite returned error: %v", err)
+	}
+	for _, src := range []string{"computername", "other"} {
+		if err := f.SetSourceInfo(src, "E:", 1000); err != nil {
+			t.Fatalf("SetSourceInfo returned error: %v", err)
+		}
+		files := []dataprovider.FileInfo{
+			{Path: "A.TXT", Size: 10},
+			{Path: "sub/b.txt", Size: 20},
+			{Path: "sub/c.bin", Size: 5},
+			{Path: "noext", Size: 1},
+			{Path: ".hidden", Size: 2},
+		}
+		if src == "other" {
+			files = files[:1]
+		}
+		for _, file := range files {
+			if err := f.AddFile(file); err != nil {
+				t.Fatalf("AddFile returned error: %v", err)
+			}
+		}
+	}
+	if err := f.RebuildDirTable(1000, nil); err != nil {
+		t.Fatalf("RebuildDirTable returned error: %v", err)
+	}
+	if err := f.RebuildTreeIndex(2, nil); err != nil {
+		t.Fatalf("RebuildTreeIndex returned error: %v", err)
+	}
+	f.Finalize()
+
+	p, err := dataprovidersqlite.InitDataProviderSqlite(dbFile)
+	if err != nil {
+		t.Fatalf("InitDataProviderSqlite returned error: %v", err)
+	}
+	defer p.Finalize()
+
+	exts, err := p.Extensions(context.Background(), "computername")
+	if err != nil {
+		t.Fatalf("Extensions returned error: %v", err)
+	}
+	want := []dataprovider.ExtensionStats{
+		{Ext: "txt", Size: 30, FileCount: 2},
+		{Ext: "bin", Size: 5, FileCount: 1},
+		{Ext: "", Size: 3, FileCount: 2},
+	}
+	if !reflect.DeepEqual(exts, want) {
+		t.Fatalf("Extensions = %#v, want %#v", exts, want)
+	}
+
+	var got []string
+	for first := int64(0); ; first++ {
+		page, total, err := p.FilesWithExtension(context.Background(), "computername", ".TXT", first, 1)
+		if err != nil {
+			t.Fatalf("FilesWithExtension returned error: %v", err)
+		}
+		if total != 2 {
+			t.Fatalf("FilesWithExtension total = %d, want 2", total)
+		}
+		if len(page) == 0 {
+			break
+		}
+		got = append(got, page[0].Path)
+	}
+	if !reflect.DeepEqual(got, []string{"E:/A.TXT", "E:/sub/b.txt"}) {
+		t.Fatalf("FilesWithExtension returned %v", got)
+	}
+
+	if files, total, err := p.FilesWithExtension(context.Background(), "computername", "xyz", 0, 10); err != nil || total != 0 || len(files) != 0 {
+		t.Fatalf("FilesWithExtension for unknown extension = %v, %d, %v", files, total, err)
+	}
+}
+
 func TestFilesInSizeBinReturnsMatchingFilesInCurrentDirectory(t *testing.T) {
 	dbFile := filepath.Join(t.TempDir(), "db.sqlite")
 	f, err := datafillersqlite.InitDataFillerSqlite(dbFile)

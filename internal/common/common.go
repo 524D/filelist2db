@@ -16,6 +16,16 @@ var TimeBins = []dataprovider.TimeBin{
 	{MaxAgeS: 3600 * 24 * 365 * 999, Txt: "> 12 years"},
 }
 
+// FileExt returns the lowercased extension of a file name without the dot,
+// or "" if there is none (a leading dot, as in ".bashrc", is not an extension).
+func FileExt(name string) string {
+	i := strings.LastIndexByte(name, '.')
+	if i <= 0 {
+		return ""
+	}
+	return strings.ToLower(name[i+1:])
+}
+
 // SimplifyPathElem removes leading zeros, strips non-alphanumeric characters,
 // and normalizes casing for simplified path-element matching.
 func SimplifyPathElem(elem string) string {

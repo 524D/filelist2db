@@ -54,6 +54,13 @@ type SameFiles struct {
 	Files  []FileInfo
 }
 
+// ExtensionStats is the total size and file count of the files with one extension.
+type ExtensionStats struct {
+	Ext       string // Lowercase, without the leading dot; empty for files without extension
+	Size      uint64
+	FileCount int64
+}
+
 // SearchSelection holds the filter criteria and pagination parameters used by Search.
 type SearchSelection struct {
 	Kind         int64
@@ -101,6 +108,14 @@ type DataProvider interface {
 	// (an index into TimeBin buckets, as in DirInfo's "timeBins"). Ages are
 	// relative to the "genTime" at which the tree index was last rebuilt.
 	FilesInAgeBin(ctx context.Context, source string, dir string, accessTime bool, binIndex int, first int64, limit int64) ([]SearchResult, int64, error)
+	// Extensions returns, for every file extension under source, the total size and
+	// number of files, largest total size first. Requires the tree index. It honors
+	// context cancellation.
+	Extensions(ctx context.Context, source string) ([]ExtensionStats, error)
+	// FilesWithExtension returns the files under source with extension ext (case
+	// insensitive, leading dot optional, "" for none), paged like FilesInSizeBin,
+	// plus the total number of matching files.
+	FilesWithExtension(ctx context.Context, source string, ext string, first int64, limit int64) ([]SearchResult, int64, error)
 	// FindSameFiles returns groups of files that have the same size and share the
 	// same source/root, with files larger than minSize included. It honors
 	// context cancellation.

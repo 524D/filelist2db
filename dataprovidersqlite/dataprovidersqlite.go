@@ -507,11 +507,20 @@ func (d *DataProviderSqlite) filesInBin(ctx context.Context, binColumn string, s
 	}
 	defer rows.Close()
 
+	results, err := d.readFileRows(ctx, rows, source, limit)
+	if err != nil {
+		return nil, 0, err
+	}
+	return results, total, nil
+}
+
+// readFileRows converts rows of (parent_id, elem, size, mtime, atime) into file results of source.
+func (d *DataProviderSqlite) readFileRows(ctx context.Context, rows *sql.Rows, source string, limit int64) ([]dataprovider.SearchResult, error) {
 	dirPaths := make(map[int64]string)
 	results := make([]dataprovider.SearchResult, 0, limit)
 	for rows.Next() {
 		if err := ctx.Err(); err != nil {
-			return nil, 0, err
+			return nil, err
 		}
 		var parentID int64
 		var elem string
@@ -519,13 +528,14 @@ func (d *DataProviderSqlite) filesInBin(ctx context.Context, binColumn string, s
 		var mtime int64
 		var atime int64
 		if err := rows.Scan(&parentID, &elem, &size, &mtime, &atime); err != nil {
-			return nil, 0, err
+			return nil, err
 		}
 		dirPath, ok := dirPaths[parentID]
 		if !ok {
+			var err error
 			dirPath, _, err = d.resolvePathAndSourceByID(parentID)
 			if err != nil {
-				return nil, 0, err
+				return nil, err
 			}
 			dirPaths[parentID] = dirPath
 		}
@@ -545,8 +555,124 @@ func (d *DataProviderSqlite) filesInBin(ctx context.Context, binColumn string, s
 	}
 	if err := rows.Err(); err != nil {
 		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
+		return nil, err
+	}
+	return results, nil
+}
+
+// Extensions returns the per-extension totals under source from ext_summary, largest total size first.
+func (d *DataProviderSqlite) Extensions(ctx context.Context, source string) ([]dataprovider.ExtensionStats, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	if source == "" {
+		return nil, nil
+	}
+	pathID, err := d.resolvePathIDInSource(source, "")
+	if err == sql.ErrNoRows {
+		return nil, nil
+	} else if err != nil {
+		return nil, err
+	}
+
+	rows, err := d.db.QueryContext(ctx, `
+		SELECT e.ext, s.total_size, s.file_count
+		FROM ext_summary AS s
+		JOIN ext AS e ON e.id = s.ext_id
+		WHERE s.root_id = ?
+		ORDER BY s.total_size DESC, e.ext ASC`, pathID)
+	if err != nil {
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
+		return nil, err
+	}
+	defer rows.Close()
+
+	result := make([]dataprovider.ExtensionStats, 0)
+	for rows.Next() {
+		var ext string
+		var size, count int64
+		if err := rows.Scan(&ext, &size, &count); err != nil {
+			return nil, err
+		}
+		result = append(result, dataprovider.ExtensionStats{Ext: ext, Size: uint64(size), FileCount: count})
+	}
+	if err := rows.Err(); err != nil {
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
+		return nil, err
+	}
+	return result, nil
+}
+
+// FilesWithExtension lists the files under source with extension ext, using the (ext_id, dir_seq, size) index.
+func (d *DataProviderSqlite) FilesWithExtension(ctx context.Context, source string, ext string, first int64, limit int64) ([]dataprovider.SearchResult, int64, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, 0, err
+	}
+	if source == "" {
+		return nil, 0, nil
+	}
+	if limit <= 0 {
+		limit = 200
+	}
+	if first < 0 {
+		first = 0
+	}
+	ext = strings.ToLower(strings.TrimPrefix(strings.TrimSpace(ext), "."))
+
+	pathID, err := d.resolvePathIDInSource(source, "")
+	if err == sql.ErrNoRows {
+		return nil, 0, nil
+	} else if err != nil {
+		return nil, 0, err
+	}
+
+	var extID, total int64
+	err = d.db.QueryRowContext(ctx, `
+		SELECT e.id, s.file_count
+		FROM ext AS e
+		JOIN ext_summary AS s ON s.ext_id = e.id AND s.root_id = ?
+		WHERE e.ext = ?`, pathID, ext).Scan(&extID, &total)
+	if err == sql.ErrNoRows {
+		return nil, 0, nil
+	} else if err != nil {
+		if ctx.Err() != nil {
 			return nil, 0, ctx.Err()
 		}
+		return nil, 0, err
+	}
+
+	// Ordering by (dir_seq, size, id) follows the index, so LIMIT stops early without a sort.
+	rows, err := d.db.QueryContext(ctx, `
+		SELECT p.parent_id, pe.elem, f.size, f.mtime, f.atime
+		FROM dir_range AS r
+		JOIN file AS f ON f.ext_id = ? AND f.dir_seq BETWEEN r.lo AND r.hi
+		JOIN path AS p ON p.id = f.path_id
+		JOIN path_elem AS pe ON pe.id = p.path_elem_id
+		WHERE r.path_id = ?
+		ORDER BY f.dir_seq ASC, f.size ASC, f.id ASC
+		LIMIT ? OFFSET ?`, extID, pathID, limit, first)
+	if err != nil {
+		if ctx.Err() != nil {
+			return nil, 0, ctx.Err()
+		}
+		return nil, 0, err
+	}
+	defer rows.Close()
+
+	results, err := d.readFileRows(ctx, rows, source, limit)
+	if err != nil {
 		return nil, 0, err
 	}
 	return results, total, nil

@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"slices"
+	"sort"
 	"strings"
 	"time"
 
@@ -36,6 +37,7 @@ type DataFillerSqlite struct {
 	ancestorDirIDsCache           []int64
 	ancestorDirIDCachePos         map[int64]int
 	prevAncestorDirs              []int64
+	extIDs                        map[string]int64
 	stmtSelectPathElem            *sql.Stmt
 	stmtInsertPathElem            *sql.Stmt
 	stmtSelectPath                *sql.Stmt
@@ -77,7 +79,7 @@ func InitDataFillerSqlite(dbFile string) (*DataFillerSqlite, error) {
 		return nil, err
 	}
 
-	d := &DataFillerSqlite{db: db}
+	d := &DataFillerSqlite{db: db, extIDs: make(map[string]int64)}
 	if d.stmtSelectPathElem, err = db.Prepare(`SELECT id FROM path_elem WHERE elem = ?`); err != nil {
 		return nil, err
 	}
@@ -90,7 +92,7 @@ func InitDataFillerSqlite(dbFile string) (*DataFillerSqlite, error) {
 	if d.stmtInsertPath, err = db.Prepare(`INSERT INTO path (path_elem_id, parent_id, node_type) VALUES (?, ?, ?)`); err != nil {
 		return nil, err
 	}
-	if d.stmtInsertFile, err = db.Prepare(`INSERT INTO file (path_id, size, size_bin, mtime, atime, uid, acqtime) VALUES (?, ?, ?, ?, ?, ?, ?)`); err != nil {
+	if d.stmtInsertFile, err = db.Prepare(`INSERT INTO file (path_id, size, size_bin, ext_id, mtime, atime, uid, acqtime) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`); err != nil {
 		return nil, err
 	}
 	if d.stmtInsertInputFile, err = db.Prepare(`INSERT INTO input_file (path_id, timestamp) VALUES (?, ?)`); err != nil {
@@ -203,6 +205,7 @@ func createTables(db *sql.DB) error {
 		path_id INTEGER NOT NULL DEFAULT 0,
 		size INTEGER NOT NULL DEFAULT 0,
 		size_bin INTEGER NOT NULL DEFAULT 0,
+		ext_id INTEGER NOT NULL DEFAULT 0,
 		mtime_bin INTEGER NOT NULL DEFAULT 0,
 		atime_bin INTEGER NOT NULL DEFAULT 0,
 		dir_seq INTEGER NOT NULL DEFAULT 0,
@@ -220,6 +223,25 @@ func createTables(db *sql.DB) error {
 		lo INTEGER NOT NULL,
 		hi INTEGER NOT NULL
 	)`)
+	if err != nil {
+		return err
+	}
+
+	_, err = db.Exec(`CREATE TABLE IF NOT EXISTS ext (
+		id INTEGER PRIMARY KEY,
+		ext TEXT UNIQUE NOT NULL
+	)`)
+	if err != nil {
+		return err
+	}
+	// Totals per (source root, extension), filled by RebuildTreeIndex.
+	_, err = db.Exec(`CREATE TABLE IF NOT EXISTS ext_summary (
+		root_id INTEGER NOT NULL,
+		ext_id INTEGER NOT NULL,
+		total_size INTEGER NOT NULL DEFAULT 0,
+		file_count INTEGER NOT NULL DEFAULT 0,
+		PRIMARY KEY (root_id, ext_id)
+	) WITHOUT ROWID`)
 	if err != nil {
 		return err
 	}
@@ -513,8 +535,32 @@ func (d *DataFillerSqlite) addPathElems(elems []string) ([]int64, error) {
 	return out, nil
 }
 
+// extID returns the id of the extension ext in the ext table, adding it if needed.
+func (d *DataFillerSqlite) extID(ext string) (int64, error) {
+	if id, ok := d.extIDs[ext]; ok {
+		return id, nil
+	}
+	var id int64
+	err := d.db.QueryRow(`SELECT id FROM ext WHERE ext = ?`, ext).Scan(&id)
+	if err == sql.ErrNoRows {
+		var res sql.Result
+		if res, err = d.db.Exec(`INSERT INTO ext (ext) VALUES (?)`, ext); err == nil {
+			id, err = res.LastInsertId()
+		}
+	}
+	if err != nil {
+		return 0, err
+	}
+	d.extIDs[ext] = id
+	return id, nil
+}
+
 func (d *DataFillerSqlite) addFileDb(f dataprovider.FileInfo, pathId int64) (int64, error) {
-	res, err := d.stmtInsertFile.Exec(pathId, f.Size, bits.Len64(f.Size), f.Mtime, f.Atime, f.Uid, d.acqTime)
+	extID, err := d.extID(common.FileExt(path.Base(f.Path)))
+	if err != nil {
+		return 0, err
+	}
+	res, err := d.stmtInsertFile.Exec(pathId, f.Size, bits.Len64(f.Size), extID, f.Mtime, f.Atime, f.Uid, d.acqTime)
 	if err != nil {
 		return 0, err
 	}
@@ -862,7 +908,7 @@ func (d *DataFillerSqlite) RebuildDirTable(batchSize int, progress dataprovider.
 
 // binDirLevels is the number of top directory levels for which size histograms are
 // kept separately (level 1 is the outermost directory below the data source root).
-const binDirLevels = 4
+const binDirLevels = 5
 
 type binGroupKey struct {
 	level int
@@ -1018,7 +1064,7 @@ func (d *DataFillerSqlite) RebuildTreeIndex(batchSize int, progress dataprovider
 	}
 
 	// Dropped while dir_seq and the age bins are rewritten so the updates don't have to maintain them.
-	for _, idx := range []string{"file_bin_dir_idx", "file_dir_size_idx", "file_mtime_bin_dir_idx", "file_atime_bin_dir_idx"} {
+	for _, idx := range []string{"file_bin_dir_idx", "file_dir_size_idx", "file_mtime_bin_dir_idx", "file_atime_bin_dir_idx", "file_ext_dir_idx"} {
 		if _, err := d.db.Exec(`DROP INDEX IF EXISTS ` + idx); err != nil {
 			return err
 		}
@@ -1057,7 +1103,86 @@ func (d *DataFillerSqlite) RebuildTreeIndex(batchSize int, progress dataprovider
 	if _, err := d.db.Exec(`CREATE INDEX file_dir_size_idx ON file (dir_seq, size)`); err != nil {
 		return err
 	}
-	return nil
+	// Covers both listing a source's files with an extension and the per-extension totals.
+	if _, err := d.db.Exec(`CREATE INDEX file_ext_dir_idx ON file (ext_id, dir_seq, size)`); err != nil {
+		return err
+	}
+	return d.rebuildExtSummary()
+}
+
+// rebuildExtSummary recomputes ext_summary in one ordered scan of file_ext_dir_idx.
+func (d *DataFillerSqlite) rebuildExtSummary() error {
+	type root struct{ id, lo, hi int64 }
+	var roots []root
+	rootRows, err := d.db.Query(`SELECT r.path_id, r.lo, r.hi FROM dir_range r JOIN path p ON p.id = r.path_id WHERE p.parent_id = -1 ORDER BY r.lo`)
+	if err != nil {
+		return err
+	}
+	for rootRows.Next() {
+		var r root
+		if err := rootRows.Scan(&r.id, &r.lo, &r.hi); err != nil {
+			rootRows.Close()
+			return err
+		}
+		roots = append(roots, r)
+	}
+	if err := rootRows.Err(); err != nil {
+		rootRows.Close()
+		return err
+	}
+	rootRows.Close()
+
+	type key struct{ rootIdx, extID int64 }
+	type total struct{ size, count int64 }
+	totals := make(map[key]*total)
+	rows, err := d.db.Query(`SELECT ext_id, dir_seq, SUM(size), COUNT(*) FROM file INDEXED BY file_ext_dir_idx GROUP BY ext_id, dir_seq`)
+	if err != nil {
+		return err
+	}
+	for rows.Next() {
+		var extID, dirSeq, size, count int64
+		if err := rows.Scan(&extID, &dirSeq, &size, &count); err != nil {
+			rows.Close()
+			return err
+		}
+		i := sort.Search(len(roots), func(i int) bool { return roots[i].hi >= dirSeq })
+		if i == len(roots) || roots[i].lo > dirSeq {
+			continue
+		}
+		k := key{int64(i), extID}
+		t := totals[k]
+		if t == nil {
+			t = &total{}
+			totals[k] = t
+		}
+		t.size += size
+		t.count += count
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return err
+	}
+	rows.Close()
+
+	tx, err := d.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if _, err := tx.Exec(`DELETE FROM ext_summary`); err != nil {
+		return err
+	}
+	stmt, err := tx.Prepare(`INSERT INTO ext_summary (root_id, ext_id, total_size, file_count) VALUES (?, ?, ?, ?)`)
+	if err != nil {
+		return err
+	}
+	defer stmt.Close()
+	for k, t := range totals {
+		if _, err := stmt.Exec(roots[k.rootIdx].id, k.extID, t.size, t.count); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
 }
 
 // ageBinSQL returns a SQL expression giving the common.TimeBins index of the
