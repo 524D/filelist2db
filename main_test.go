@@ -27,6 +27,9 @@ func TestDataProviderSearchBySimpleNameInterface(t *testing.T) {
 	_ = func(ctx context.Context, source string, dir string, binIndex int, first int64, limit int64) ([]dataprovider.SearchResult, int64, error) {
 		return provider.FilesInSizeBin(ctx, source, dir, binIndex, first, limit)
 	}
+	_ = func(ctx context.Context, source string, dir string, accessTime bool, binIndex int, first int64, limit int64) ([]dataprovider.SearchResult, int64, error) {
+		return provider.FilesInAgeBin(ctx, source, dir, accessTime, binIndex, first, limit)
+	}
 	_ = func(ctx context.Context, minSize uint64) ([]dataprovider.SameFiles, error) {
 		return provider.FindSameFiles(ctx, minSize)
 	}
@@ -129,6 +132,69 @@ func TestFilesInSizeBinReturnsMatchingFilesInCurrentDirectory(t *testing.T) {
 			t.Fatalf("paging returned %s twice: %v", path, paged)
 		}
 		seen[path] = true
+	}
+}
+
+func TestFilesInAgeBinSelectsByModifyOrAccessTime(t *testing.T) {
+	dbFile := filepath.Join(t.TempDir(), "db.sqlite")
+	f, err := datafillersqlite.InitDataFillerSqlite(dbFile)
+	if err != nil {
+		t.Fatalf("InitDataFillerSqlite returned error: %v", err)
+	}
+	now := time.Now().Unix()
+	const day = int64(24 * 3600)
+	if err := f.SetSourceInfo("computername", "E:", now); err != nil {
+		t.Fatalf("SetSourceInfo returned error: %v", err)
+	}
+	// Bin 0: < 4 months, bin 1: 4 to 12 months, bin 5: > 12 years.
+	for _, file := range []dataprovider.FileInfo{
+		{Path: "new.bin", Size: 1, Mtime: now - day, Atime: now - 200*day},
+		{Path: "sub/mid.bin", Size: 2, Mtime: now - 200*day, Atime: now - day},
+		{Path: "sub/old.bin", Size: 3, Mtime: now - 5000*day, Atime: now - 5000*day},
+	} {
+		if err := f.AddFile(file); err != nil {
+			t.Fatalf("AddFile returned error: %v", err)
+		}
+	}
+	if err := f.RebuildDirTable(1000, nil); err != nil {
+		t.Fatalf("RebuildDirTable returned error: %v", err)
+	}
+	if err := f.RebuildTreeIndex(2, nil); err != nil {
+		t.Fatalf("RebuildTreeIndex returned error: %v", err)
+	}
+	f.Finalize()
+
+	p, err := dataprovidersqlite.InitDataProviderSqlite(dbFile)
+	if err != nil {
+		t.Fatalf("InitDataProviderSqlite returned error: %v", err)
+	}
+	defer p.Finalize()
+
+	for _, tc := range []struct {
+		dir        string
+		accessTime bool
+		bin        int
+		want       []string
+	}{
+		{"E:", false, 0, []string{"E:/new.bin"}},
+		{"E:", false, 1, []string{"E:/sub/mid.bin"}},
+		{"E:", false, 5, []string{"E:/sub/old.bin"}},
+		{"E:", true, 0, []string{"E:/sub/mid.bin"}},
+		{"E:", true, 1, []string{"E:/new.bin"}},
+		{"E:/sub", false, 0, nil},
+		{"E:/sub", true, 0, []string{"E:/sub/mid.bin"}},
+	} {
+		files, total, err := p.FilesInAgeBin(context.Background(), "computername", tc.dir, tc.accessTime, tc.bin, 0, 100)
+		if err != nil {
+			t.Fatalf("FilesInAgeBin returned error: %v", err)
+		}
+		var got []string
+		for _, file := range files {
+			got = append(got, file.Path)
+		}
+		if total != int64(len(tc.want)) || !reflect.DeepEqual(got, tc.want) {
+			t.Errorf("FilesInAgeBin(%s, atime=%v, bin=%d) = %v (total %d), want %v", tc.dir, tc.accessTime, tc.bin, got, total, tc.want)
+		}
 	}
 }
 

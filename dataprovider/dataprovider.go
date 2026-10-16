@@ -96,6 +96,11 @@ type DataProvider interface {
 	// matching files, regardless of paging. Order is stable across calls. It honors
 	// context cancellation.
 	FilesInSizeBin(ctx context.Context, source string, dir string, binIndex int, first int64, limit int64) ([]SearchResult, int64, error)
+	// FilesInAgeBin is like FilesInSizeBin, but selects files whose modification
+	// time (or access time if accessTime is true) falls in the time bin binIndex
+	// (an index into TimeBin buckets, as in DirInfo's "timeBins"). Ages are
+	// relative to the "genTime" at which the tree index was last rebuilt.
+	FilesInAgeBin(ctx context.Context, source string, dir string, accessTime bool, binIndex int, first int64, limit int64) ([]SearchResult, int64, error)
 	// FindSameFiles returns groups of files that have the same size and share the
 	// same source/root, with files larger than minSize included. It honors
 	// context cancellation.

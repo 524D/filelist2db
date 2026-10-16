@@ -430,7 +430,22 @@ func (d *DataProviderSqlite) FindSameFiles(ctx context.Context, minSize uint64) 
 	return result, nil
 }
 
+// FilesInSizeBin returns the files under source+dir in the given power-of-two size bin.
 func (d *DataProviderSqlite) FilesInSizeBin(ctx context.Context, source string, dir string, binIndex int, first int64, limit int64) ([]dataprovider.SearchResult, int64, error) {
+	return d.filesInBin(ctx, "size_bin", source, dir, binIndex, first, limit)
+}
+
+// FilesInAgeBin returns the files under source+dir in the given modification or access time bin.
+func (d *DataProviderSqlite) FilesInAgeBin(ctx context.Context, source string, dir string, accessTime bool, binIndex int, first int64, limit int64) ([]dataprovider.SearchResult, int64, error) {
+	column := "mtime_bin"
+	if accessTime {
+		column = "atime_bin"
+	}
+	return d.filesInBin(ctx, column, source, dir, binIndex, first, limit)
+}
+
+// filesInBin lists files under source+dir whose binColumn (a file table column, never user input) equals binIndex.
+func (d *DataProviderSqlite) filesInBin(ctx context.Context, binColumn string, source string, dir string, binIndex int, first int64, limit int64) ([]dataprovider.SearchResult, int64, error) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -466,7 +481,7 @@ func (d *DataProviderSqlite) FilesInSizeBin(ctx context.Context, source string, 
 	if err := d.db.QueryRowContext(ctx, `
 		SELECT COUNT(*)
 		FROM dir_range AS r
-		JOIN file AS f ON f.size_bin = ? AND f.dir_seq BETWEEN r.lo AND r.hi
+		JOIN file AS f ON f.`+binColumn+` = ? AND f.dir_seq BETWEEN r.lo AND r.hi
 		WHERE r.path_id = ?`, binIndex, pathID).Scan(&total); err != nil {
 		if ctx.Err() != nil {
 			return nil, 0, ctx.Err()
@@ -474,11 +489,11 @@ func (d *DataProviderSqlite) FilesInSizeBin(ctx context.Context, source string, 
 		return nil, 0, err
 	}
 
-	// Ordering by (dir_seq, id) follows file_bin_dir_idx, so LIMIT stops early without a sort.
+	// Ordering by (dir_seq, id) follows the (bin, dir_seq) index of binColumn, so LIMIT stops early without a sort.
 	rows, err := d.db.QueryContext(ctx, `
 		SELECT p.parent_id, pe.elem, f.size, f.mtime, f.atime
 		FROM dir_range AS r
-		JOIN file AS f ON f.size_bin = ? AND f.dir_seq BETWEEN r.lo AND r.hi
+		JOIN file AS f ON f.`+binColumn+` = ? AND f.dir_seq BETWEEN r.lo AND r.hi
 		JOIN path AS p ON p.id = f.path_id
 		JOIN path_elem AS pe ON pe.id = p.path_elem_id
 		WHERE r.path_id = ?

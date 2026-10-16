@@ -352,7 +352,7 @@ func main() {
 			log.Fatal(err)
 		}
 
-		// The size-bin drill-down (FilesInSizeBin) needs the tree index.
+		// The size-bin and age-bin drill-downs (FilesInSizeBin, FilesInAgeBin) need the tree index.
 		fmt.Println()
 		treeBar := progressbar.NewOptions(100, progressbar.OptionSetDescription("Rebuilding directory tree index"))
 		treeBar.Set64(0)

@@ -18,7 +18,8 @@ type DataFiller interface {
 	// progress via progress if non-nil.
 	RebuildBinTable(batchSize int, progress dataprovider.ProgressFunc) error
 	// RebuildTreeIndex renumbers the directory tree and updates every file's
-	// directory sequence number, so that all files under a directory can be
+	// directory sequence number and modification/access age bins, so that all
+	// files under a directory (optionally in a given size or age bin) can be
 	// selected with a single range lookup. Must be rerun after importing files.
 	RebuildTreeIndex(batchSize int, progress dataprovider.ProgressFunc) error
 	// SetProtectedPatterns replaces the full set of regular expressions used to

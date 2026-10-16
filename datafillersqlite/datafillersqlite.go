@@ -203,6 +203,8 @@ func createTables(db *sql.DB) error {
 		path_id INTEGER NOT NULL DEFAULT 0,
 		size INTEGER NOT NULL DEFAULT 0,
 		size_bin INTEGER NOT NULL DEFAULT 0,
+		mtime_bin INTEGER NOT NULL DEFAULT 0,
+		atime_bin INTEGER NOT NULL DEFAULT 0,
 		dir_seq INTEGER NOT NULL DEFAULT 0,
 		mtime INTEGER NOT NULL DEFAULT 0,
 		atime INTEGER NOT NULL DEFAULT 0,
@@ -996,7 +998,9 @@ func (d *DataFillerSqlite) RebuildBinTable(batchSize int, progress dataprovider.
 // RebuildTreeIndex numbers the directory tree in depth-first order, stores each
 // directory's subtree as a [lo, hi] range in dir_range, and sets file.dir_seq to
 // the lo of the file's parent directory. A file is then under directory D exactly
-// when D.lo <= file.dir_seq <= D.hi. Files are updated in id ranges of batchSize,
+// when D.lo <= file.dir_seq <= D.hi. It also sets file.mtime_bin/atime_bin to the
+// common.TimeBins bucket of the file, relative to the genTime of the last
+// RebuildDirTable (or now, if none). Files are updated in id ranges of batchSize,
 // reporting progress (processed, total) via progress if non-nil.
 func (d *DataFillerSqlite) RebuildTreeIndex(batchSize int, progress dataprovider.ProgressFunc) error {
 	if batchSize <= 0 {
@@ -1006,12 +1010,18 @@ func (d *DataFillerSqlite) RebuildTreeIndex(batchSize int, progress dataprovider
 		return err
 	}
 
-	// Dropped while dir_seq is rewritten so the updates don't have to maintain them.
-	if _, err := d.db.Exec(`DROP INDEX IF EXISTS file_bin_dir_idx`); err != nil {
+	var genTime = time.Now().Unix()
+	if err := d.db.QueryRow(`SELECT value FROM meta WHERE name = 'genTime'`).Scan(&genTime); err == sql.ErrNoRows {
+		genTime = time.Now().Unix()
+	} else if err != nil {
 		return err
 	}
-	if _, err := d.db.Exec(`DROP INDEX IF EXISTS file_dir_size_idx`); err != nil {
-		return err
+
+	// Dropped while dir_seq and the age bins are rewritten so the updates don't have to maintain them.
+	for _, idx := range []string{"file_bin_dir_idx", "file_dir_size_idx", "file_mtime_bin_dir_idx", "file_atime_bin_dir_idx"} {
+		if _, err := d.db.Exec(`DROP INDEX IF EXISTS ` + idx); err != nil {
+			return err
+		}
 	}
 
 	var minID, maxID sql.NullInt64
@@ -1020,11 +1030,13 @@ func (d *DataFillerSqlite) RebuildTreeIndex(batchSize int, progress dataprovider
 	}
 	if minID.Valid {
 		total := maxID.Int64 - minID.Int64 + 1
+		updateSQL := `UPDATE file SET dir_seq = (
+				SELECT r.lo FROM path p JOIN dir_range r ON r.path_id = p.parent_id WHERE p.id = file.path_id
+			), mtime_bin = ` + ageBinSQL("mtime", genTime) + `, atime_bin = ` + ageBinSQL("atime", genTime) + `
+			WHERE id >= ? AND id < ?`
 		for start := minID.Int64; start <= maxID.Int64; start += int64(batchSize) {
 			end := start + int64(batchSize)
-			if _, err := d.db.Exec(`UPDATE file SET dir_seq = (
-					SELECT r.lo FROM path p JOIN dir_range r ON r.path_id = p.parent_id WHERE p.id = file.path_id
-				) WHERE id >= ? AND id < ?`, start, end); err != nil {
+			if _, err := d.db.Exec(updateSQL, start, end); err != nil {
 				return err
 			}
 			if progress != nil {
@@ -1036,10 +1048,28 @@ func (d *DataFillerSqlite) RebuildTreeIndex(batchSize int, progress dataprovider
 	if _, err := d.db.Exec(`CREATE INDEX file_bin_dir_idx ON file (size_bin, dir_seq)`); err != nil {
 		return err
 	}
+	if _, err := d.db.Exec(`CREATE INDEX file_mtime_bin_dir_idx ON file (mtime_bin, dir_seq)`); err != nil {
+		return err
+	}
+	if _, err := d.db.Exec(`CREATE INDEX file_atime_bin_dir_idx ON file (atime_bin, dir_seq)`); err != nil {
+		return err
+	}
 	if _, err := d.db.Exec(`CREATE INDEX file_dir_size_idx ON file (dir_seq, size)`); err != nil {
 		return err
 	}
 	return nil
+}
+
+// ageBinSQL returns a SQL expression giving the common.TimeBins index of the
+// timestamp column col, for the age relative to now (same rule as dirTimeBucket).
+func ageBinSQL(col string, now int64) string {
+	var sb strings.Builder
+	sb.WriteString("CASE")
+	for i, tb := range common.TimeBins[:len(common.TimeBins)-1] {
+		fmt.Fprintf(&sb, " WHEN %d - %s < %d THEN %d", now, col, tb.MaxAgeS, i)
+	}
+	fmt.Fprintf(&sb, " ELSE %d END", len(common.TimeBins)-1)
+	return sb.String()
 }
 
 // rebuildDirRange recomputes dir_range from the path table.
