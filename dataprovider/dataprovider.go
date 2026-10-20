@@ -81,7 +81,7 @@ type SearchSelection struct {
 type DataProvider interface {
 	// DataSources returns the list of data sources available in the provider.
 	// Sources are either a computer name or a network share name.
-	DataSources() ([]string, error)
+	DataSources(ctx context.Context) ([]string, error)
 	// DirInfo returns a map describing the directory at source+dir, or nil if it
 	// doesn't exist. Keys include "mtimes"/"atimes" (size-by-age []uint64 buckets,
 	// see TimeBin), "acqTimeMin"/"acqTimeMax" (int64 Unix timestamps), "genTime"
@@ -89,7 +89,7 @@ type DataProvider interface {
 	// bucket descriptions), "subDirs" ([]SubDirStats), "protected" (bool), and
 	// optionally "sizeBins" (per-size-bucket totals, only for the outermost
 	// directory levels).
-	DirInfo(source string, dir string) (map[string]any, error)
+	DirInfo(ctx context.Context, source string, dir string) (map[string]any, error)
 	// Search returns the files/directories matching selection, a metadata map
 	// (e.g. "SearchTimeMicroSeconds"), and an error, if any. It honors
 	// context cancellation.

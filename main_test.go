@@ -363,7 +363,7 @@ func TestDirInfoIncludesAcquisitionTimeRange(t *testing.T) {
 	}
 	defer p.Finalize()
 
-	info, err := p.DirInfo("computername", "E:")
+	info, err := p.DirInfo(context.Background(), "computername", "E:")
 	if err != nil {
 		t.Fatalf("DirInfo returned error: %v", err)
 	}
@@ -403,7 +403,7 @@ func TestDirInfoIncludesGenerationTime(t *testing.T) {
 	}
 	defer p.Finalize()
 
-	info, err := p.DirInfo("computername", "E:")
+	info, err := p.DirInfo(context.Background(), "computername", "E:")
 	if err != nil {
 		t.Fatalf("DirInfo returned error: %v", err)
 	}
@@ -446,7 +446,7 @@ func TestDirInfoSubdirSizesAreNotPaddedWithZeroes(t *testing.T) {
 	}
 	defer p.Finalize()
 
-	info, err := p.DirInfo("computername", "E:")
+	info, err := p.DirInfo(context.Background(), "computername", "E:")
 	if err != nil {
 		t.Fatalf("DirInfo returned error: %v", err)
 	}
@@ -841,7 +841,7 @@ func TestDataSourcesReturnsRootNames(t *testing.T) {
 	}
 	defer d.Finalize()
 
-	sources, err := d.DataSources()
+	sources, err := d.DataSources(context.Background())
 	if err != nil {
 		t.Fatalf("DataSources returned error: %v", err)
 	}
@@ -1057,7 +1057,7 @@ func TestSetProtectedPatternsMarksDirInfoAndSubdirs(t *testing.T) {
 	}
 	defer p.Finalize()
 
-	info, err := p.DirInfo("computername", "E:/confidential")
+	info, err := p.DirInfo(context.Background(), "computername", "E:/confidential")
 	if err != nil {
 		t.Fatalf("DirInfo returned error: %v", err)
 	}
@@ -1065,7 +1065,7 @@ func TestSetProtectedPatternsMarksDirInfoAndSubdirs(t *testing.T) {
 		t.Fatalf("expected DirInfo for 'confidential' to be marked protected, got: %#v", info["protected"])
 	}
 
-	rootInfo, err := p.DirInfo("computername", "E:")
+	rootInfo, err := p.DirInfo(context.Background(), "computername", "E:")
 	if err != nil {
 		t.Fatalf("DirInfo returned error: %v", err)
 	}

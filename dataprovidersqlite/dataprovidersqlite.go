@@ -176,8 +176,8 @@ func (d *DataProviderSqlite) Finalize() {
 
 // DataSources returns the list of root source names (computer or network
 // share names) stored in the database.
-func (d *DataProviderSqlite) DataSources() ([]string, error) {
-	rows, err := d.stmtSelectRootSources.Query()
+func (d *DataProviderSqlite) DataSources(ctx context.Context) ([]string, error) {
+	rows, err := d.stmtSelectRootSources.QueryContext(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -198,16 +198,16 @@ func (d *DataProviderSqlite) DataSources() ([]string, error) {
 }
 
 // Resolve the path ID for a directory under a given source root
-func (d *DataProviderSqlite) resolvePathIDInSource(source string, dir string) (int64, error) {
+func (d *DataProviderSqlite) resolvePathIDInSource(ctx context.Context, source string, dir string) (int64, error) {
 	elems := buildPathElems(source, dir)
 	parentID := int64(-1)
 	for _, elem := range elems {
 		var pathElemID int64
-		if err := d.stmtSelectPathElem.QueryRow(elem).Scan(&pathElemID); err != nil {
+		if err := d.stmtSelectPathElem.QueryRowContext(ctx, elem).Scan(&pathElemID); err != nil {
 			return 0, err
 		}
 		var id int64
-		if err := d.stmtSelectPathIDByElemAndParentPathID.QueryRow(pathElemID, parentID).Scan(&id); err != nil {
+		if err := d.stmtSelectPathIDByElemAndParentPathID.QueryRowContext(ctx, pathElemID, parentID).Scan(&id); err != nil {
 			return 0, err
 		}
 		parentID = id
@@ -232,8 +232,8 @@ func buildPathElems(source string, dir string) []string {
 
 // DirInfo returns a map describing the directory at source+dir, or nil if the
 // path doesn't exist. See dataprovider.DataProvider.DirInfo for the map keys.
-func (d *DataProviderSqlite) DirInfo(source string, dir string) (map[string]any, error) {
-	pathID, err := d.resolvePathIDInSource(source, dir)
+func (d *DataProviderSqlite) DirInfo(ctx context.Context, source string, dir string) (map[string]any, error) {
+	pathID, err := d.resolvePathIDInSource(ctx, source, dir)
 	if err == sql.ErrNoRows {
 		return nil, nil
 	} else if err != nil {
@@ -246,7 +246,7 @@ func (d *DataProviderSqlite) DirInfo(source string, dir string) (map[string]any,
 	var aSizes = make([]uint64, 6)
 	var acqTimeMin int64
 	var acqTimeMax int64
-	if err := d.stmtSelectDirSummary.QueryRow(pathID).Scan(&mSizes[0], &mSizes[1], &mSizes[2], &mSizes[3], &mSizes[4], &mSizes[5],
+	if err := d.stmtSelectDirSummary.QueryRowContext(ctx, pathID).Scan(&mSizes[0], &mSizes[1], &mSizes[2], &mSizes[3], &mSizes[4], &mSizes[5],
 		&aSizes[0], &aSizes[1], &aSizes[2], &aSizes[3], &aSizes[4], &aSizes[5],
 		&acqTimeMin, &acqTimeMax); err != nil {
 		if err == sql.ErrNoRows {
@@ -259,7 +259,7 @@ func (d *DataProviderSqlite) DirInfo(source string, dir string) (map[string]any,
 		}
 	}
 
-	rows, err := d.db.Query(`
+	rows, err := d.db.QueryContext(ctx, `
 		SELECT pe.elem, d.total_size, d.file_count
 		FROM path p
 		JOIN path_elem pe ON pe.id = p.path_elem_id
@@ -291,11 +291,11 @@ func (d *DataProviderSqlite) DirInfo(source string, dir string) (map[string]any,
 	}
 
 	genTime := int64(0)
-	if err := d.stmtSelectMeta.QueryRow("genTime").Scan(&genTime); err != nil && err != sql.ErrNoRows {
+	if err := d.stmtSelectMeta.QueryRowContext(ctx, "genTime").Scan(&genTime); err != nil && err != sql.ErrNoRows {
 		return nil, err
 	}
 
-	binRows, err := d.stmtSelectBinSizes.Query(pathID)
+	binRows, err := d.stmtSelectBinSizes.QueryContext(ctx, pathID)
 	if err != nil {
 		return nil, err
 	}
@@ -466,7 +466,7 @@ func (d *DataProviderSqlite) filesInBin(ctx context.Context, binColumn string, s
 		first = 0
 	}
 
-	pathID, err := d.resolvePathIDInSource(source, dir)
+	pathID, err := d.resolvePathIDInSource(ctx, source, dir)
 	if err == sql.ErrNoRows {
 		return nil, 0, nil
 	} else if err != nil {
@@ -573,7 +573,7 @@ func (d *DataProviderSqlite) Extensions(ctx context.Context, source string, dir 
 	if source == "" {
 		return nil, nil
 	}
-	pathID, err := d.resolvePathIDInSource(source, dir)
+	pathID, err := d.resolvePathIDInSource(ctx, source, dir)
 	if err == sql.ErrNoRows {
 		return nil, nil
 	} else if err != nil {
@@ -631,7 +631,7 @@ func (d *DataProviderSqlite) FilesWithExtension(ctx context.Context, source stri
 	}
 	ext = strings.ToLower(strings.TrimPrefix(strings.TrimSpace(ext), "."))
 
-	pathID, err := d.resolvePathIDInSource(source, dir)
+	pathID, err := d.resolvePathIDInSource(ctx, source, dir)
 	if err == sql.ErrNoRows {
 		return nil, 0, nil
 	} else if err != nil {
