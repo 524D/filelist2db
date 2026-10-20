@@ -597,12 +597,12 @@ type dirSummary struct {
 
 func dirTimeBucket(t int64, acqTime int64) int {
 	age := acqTime - t
-	for i, tb := range common.TimeBins {
+	for i, tb := range dataprovider.TimeBins {
 		if age < int64(tb.MaxAgeS) {
 			return i
 		}
 	}
-	return len(common.TimeBins) - 1
+	return len(dataprovider.TimeBins) - 1
 }
 
 func (d *DataFillerSqlite) ancestorDirIDs(pathID int64) ([]int64, error) {
@@ -1227,10 +1227,10 @@ func (d *DataFillerSqlite) rebuildExtSummary() error {
 func ageBinSQL(col string, now int64) string {
 	var sb strings.Builder
 	sb.WriteString("CASE")
-	for i, tb := range common.TimeBins[:len(common.TimeBins)-1] {
+	for i, tb := range dataprovider.TimeBins[:len(dataprovider.TimeBins)-1] {
 		fmt.Fprintf(&sb, " WHEN %d - %s < %d THEN %d", now, col, tb.MaxAgeS, i)
 	}
-	fmt.Fprintf(&sb, " ELSE %d END", len(common.TimeBins)-1)
+	fmt.Fprintf(&sb, " ELSE %d END", len(dataprovider.TimeBins)-1)
 	return sb.String()
 }
 

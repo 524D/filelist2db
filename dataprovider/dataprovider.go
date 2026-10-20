@@ -1,6 +1,8 @@
 package dataprovider
 
-import "context"
+import (
+	"context"
+)
 
 // UidT is a file owner's numeric user ID (uid).
 type UidT uint64
@@ -122,4 +124,14 @@ type DataProvider interface {
 	FindSameFiles(ctx context.Context, minSize uint64) ([]SameFiles, error)
 	// Finalize closes all resources associated with the data provider.
 	Finalize()
+}
+
+// TimeBins defines the common age buckets used by directory summaries.
+var TimeBins = []TimeBin{
+	{MaxAgeS: 3600 * 24 * 31 * 4, Txt: "< 4 months"},
+	{MaxAgeS: 3600 * 24 * 365, Txt: "4 to 12 months"},
+	{MaxAgeS: 3600 * 24 * 365 * 3, Txt: "1 to 3 years"},
+	{MaxAgeS: 3600 * 24 * 365 * 6, Txt: "3 to 6 years"},
+	{MaxAgeS: 3600 * 24 * 365 * 12, Txt: "6 to 12 years"},
+	{MaxAgeS: 3600 * 24 * 365 * 999, Txt: "> 12 years"},
 }

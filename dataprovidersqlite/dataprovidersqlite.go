@@ -321,7 +321,7 @@ func (d *DataProviderSqlite) DirInfo(ctx context.Context, source string, dir str
 	info["acqTimeMin"] = acqTimeMin
 	info["acqTimeMax"] = acqTimeMax
 	info["genTime"] = genTime
-	info["timeBins"] = common.TimeBins
+	info["timeBins"] = dataprovider.TimeBins
 	info["subDirs"] = subDirs
 	// Only include the "protected" key if the directory is actually protected, to avoid cluttering the output with false values.
 	if protected {
